@@ -1,0 +1,5 @@
+{
+  "name": "Dad Finance",
+  "description": "A comprehensive personal finance tracker with local-first storage, advanced reporting, and custom category management.",
+  "requestFramePermissions": []
+}
