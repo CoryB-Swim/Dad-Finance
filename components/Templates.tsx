@@ -1,5 +1,6 @@
+
 import React, { useState } from 'react';
-import { RecurringTemplate, TransactionType, Category, Transaction } from '../types';
+import { RecurringTemplate, TransactionType, Category, Transaction, PaymentMethod } from '../types';
 import { Repeat, Trash2, Zap, LayoutGrid, Info, Edit2, X } from 'lucide-react';
 import TransactionForm from './TransactionForm';
 
@@ -10,9 +11,10 @@ interface TemplatesProps {
   onUpdate: (t: RecurringTemplate) => void;
   transactions: Transaction[];
   categories: Category[];
+  paymentMethods: PaymentMethod[];
 }
 
-const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUpdate, transactions, categories }) => {
+const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUpdate, transactions, categories, paymentMethods }) => {
   const [editingTemplate, setEditingTemplate] = useState<RecurringTemplate | null>(null);
 
   const handleEditClick = (tmp: RecurringTemplate) => {
@@ -23,11 +25,11 @@ const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUp
     if (!editingTemplate) return;
     const updatedTemplate: RecurringTemplate = {
       id: editingTemplate.id,
-      name: t.vendor || t.category,
+      name: t.merchant || t.category,
       amount: t.amount,
       category: t.category,
       subCategory: t.subCategory,
-      vendor: t.vendor,
+      merchant: t.merchant,
       description: t.description,
       type: t.type
     };
@@ -52,6 +54,7 @@ const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUp
               {/* Note: Passing a fake date because TransactionForm expects it */}
               <TransactionForm 
                 categories={categories} 
+                paymentMethods={paymentMethods}
                 transactions={transactions} 
                 onAddTransaction={() => {}} 
                 onUpdateTransaction={handleUpdateTemplate}
@@ -93,7 +96,7 @@ const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUp
                     <LayoutGrid size={20} />
                   </div>
                   <div>
-                    <h3 className="font-bold text-gray-900">{tmp.vendor || tmp.category}</h3>
+                    <h3 className="font-bold text-gray-900">{tmp.merchant || tmp.category}</h3>
                     <span className="text-[10px] font-black uppercase text-gray-400 tracking-wider">{tmp.category}</span>
                   </div>
                 </div>

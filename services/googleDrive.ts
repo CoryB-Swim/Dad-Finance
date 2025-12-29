@@ -1,5 +1,5 @@
 
-import { Transaction, Category } from '../types';
+import { Transaction, Category, Merchant } from '../types';
 
 const SYNC_FILE_NAME = 'fintrack_sync.json';
 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
@@ -11,6 +11,7 @@ const CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID_HERE';
 export interface SyncData {
   transactions: Transaction[];
   categories: Category[];
+  merchants: Merchant[];
   lastUpdated: string;
 }
 

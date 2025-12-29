@@ -1,11 +1,13 @@
-import { Transaction, Category, Vendor, RecurringTemplate, INITIAL_CATEGORIES } from '../types';
+
+import { Transaction, Category, Merchant, RecurringTemplate, PaymentMethod } from '../types';
 
 const DB_NAME = 'FinTrackDB';
-const DB_VERSION = 3; 
+const DB_VERSION = 4; // Incremented version to add paymentMethods store
 const STORE_TRANSACTIONS = 'transactions';
 const STORE_CATEGORIES = 'categories';
-const STORE_VENDORS = 'vendors';
+const STORE_MERCHANTS = 'vendors'; 
 const STORE_TEMPLATES = 'templates';
+const STORE_PAYMENT_METHODS = 'paymentMethods';
 
 export const initDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
@@ -19,11 +21,14 @@ export const initDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORE_CATEGORIES)) {
         db.createObjectStore(STORE_CATEGORIES, { keyPath: 'id', autoIncrement: true });
       }
-      if (!db.objectStoreNames.contains(STORE_VENDORS)) {
-        db.createObjectStore(STORE_VENDORS, { keyPath: 'id', autoIncrement: true });
+      if (!db.objectStoreNames.contains(STORE_MERCHANTS)) {
+        db.createObjectStore(STORE_MERCHANTS, { keyPath: 'id', autoIncrement: true });
       }
       if (!db.objectStoreNames.contains(STORE_TEMPLATES)) {
         db.createObjectStore(STORE_TEMPLATES, { keyPath: 'id', autoIncrement: true });
+      }
+      if (!db.objectStoreNames.contains(STORE_PAYMENT_METHODS)) {
+        db.createObjectStore(STORE_PAYMENT_METHODS, { keyPath: 'id', autoIncrement: true });
       }
     };
 
@@ -32,21 +37,21 @@ export const initDB = (): Promise<IDBDatabase> => {
   });
 };
 
-export const ensureInitialCategories = async (db: IDBDatabase) => {
-  const categories = await getAllCategories(db);
-  if (categories.length === 0) {
-    for (const cat of INITIAL_CATEGORIES) {
-      await addCategory(db, { name: cat.name, type: cat.type, subCategories: cat.subCategories });
-    }
-  }
+// Generic CRUD helper
+const getAll = <T>(db: IDBDatabase, storeName: string): Promise<T[]> => {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const request = tx.objectStore(storeName).getAll();
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
 };
 
-// Transactions
-export const addTransaction = (db: IDBDatabase, transaction: Transaction): Promise<number> => {
+const add = <T>(db: IDBDatabase, storeName: string, item: T): Promise<number> => {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_TRANSACTIONS, 'readwrite');
-    const store = tx.objectStore(STORE_TRANSACTIONS);
-    const data = { ...transaction };
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    const data = { ...item } as any;
     if (data.id === undefined) delete data.id;
     const request = store.add(data);
     request.onsuccess = () => resolve(request.result as number);
@@ -54,181 +59,74 @@ export const addTransaction = (db: IDBDatabase, transaction: Transaction): Promi
   });
 };
 
-export const deleteTransaction = (db: IDBDatabase, id: number): Promise<void> => {
+const update = <T>(db: IDBDatabase, storeName: string, item: T): Promise<void> => {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_TRANSACTIONS, 'readwrite');
-    tx.objectStore(STORE_TRANSACTIONS).delete(id);
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).put(item);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 };
 
-export const getAllTransactions = (db: IDBDatabase): Promise<Transaction[]> => {
+const remove = (db: IDBDatabase, storeName: string, id: number): Promise<void> => {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_TRANSACTIONS, 'readonly');
-    const request = tx.objectStore(STORE_TRANSACTIONS).getAll();
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-};
-
-// Templates
-export const addTemplate = (db: IDBDatabase, template: RecurringTemplate): Promise<number> => {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_TEMPLATES, 'readwrite');
-    const request = tx.objectStore(STORE_TEMPLATES).add(template);
-    request.onsuccess = () => resolve(request.result as number);
-    request.onerror = () => reject(request.error);
-  });
-};
-
-export const updateTemplate = (db: IDBDatabase, template: RecurringTemplate): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_TEMPLATES, 'readwrite');
-    tx.objectStore(STORE_TEMPLATES).put(template);
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).delete(id);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 };
 
-export const getAllTemplates = (db: IDBDatabase): Promise<RecurringTemplate[]> => {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_TEMPLATES, 'readonly');
-    const request = tx.objectStore(STORE_TEMPLATES).getAll();
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-};
+// Export specific functions
+export const getAllTransactions = (db: IDBDatabase) => getAll<Transaction>(db, STORE_TRANSACTIONS);
+export const addTransaction = (db: IDBDatabase, t: Transaction) => add(db, STORE_TRANSACTIONS, t);
+export const updateTransaction = (db: IDBDatabase, t: Transaction) => update(db, STORE_TRANSACTIONS, t);
+export const deleteTransaction = (db: IDBDatabase, id: number) => remove(db, STORE_TRANSACTIONS, id);
 
-export const deleteTemplate = (db: IDBDatabase, id: number): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_TEMPLATES, 'readwrite');
-    tx.objectStore(STORE_TEMPLATES).delete(id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-};
+export const getAllCategories = (db: IDBDatabase) => getAll<Category>(db, STORE_CATEGORIES);
+export const addCategory = (db: IDBDatabase, c: Category) => add(db, STORE_CATEGORIES, c);
+export const updateCategory = (db: IDBDatabase, c: Category) => update(db, STORE_CATEGORIES, c);
+export const deleteCategory = (db: IDBDatabase, id: number) => remove(db, STORE_CATEGORIES, id);
 
-// Categories
-export const addCategory = (db: IDBDatabase, category: Category): Promise<number> => {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_CATEGORIES, 'readwrite');
-    const request = tx.objectStore(STORE_CATEGORIES).add(category);
-    request.onsuccess = () => resolve(request.result as number);
-    request.onerror = () => reject(request.error);
-  });
-};
+export const getAllMerchants = (db: IDBDatabase) => getAll<Merchant>(db, STORE_MERCHANTS);
+export const addMerchant = (db: IDBDatabase, m: Merchant) => add(db, STORE_MERCHANTS, m);
+export const updateMerchant = (db: IDBDatabase, m: Merchant) => update(db, STORE_MERCHANTS, m);
+export const deleteMerchant = (db: IDBDatabase, id: number) => remove(db, STORE_MERCHANTS, id);
 
-export const updateCategory = (db: IDBDatabase, category: Category): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_CATEGORIES, 'readwrite');
-    tx.objectStore(STORE_CATEGORIES).put(category);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-};
+export const getAllTemplates = (db: IDBDatabase) => getAll<RecurringTemplate>(db, STORE_TEMPLATES);
+export const addTemplate = (db: IDBDatabase, t: RecurringTemplate) => add(db, STORE_TEMPLATES, t);
+export const updateTemplate = (db: IDBDatabase, t: RecurringTemplate) => update(db, STORE_TEMPLATES, t);
+export const deleteTemplate = (db: IDBDatabase, id: number) => remove(db, STORE_TEMPLATES, id);
 
-export const deleteCategory = (db: IDBDatabase, id: number): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_CATEGORIES, 'readwrite');
-    tx.objectStore(STORE_CATEGORIES).delete(id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-};
-
-export const getAllCategories = (db: IDBDatabase): Promise<Category[]> => {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_CATEGORIES, 'readonly');
-    const request = tx.objectStore(STORE_CATEGORIES).getAll();
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-};
-
-// Vendors
-export const addVendor = (db: IDBDatabase, vendor: Vendor): Promise<number> => {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_VENDORS, 'readwrite');
-    const request = tx.objectStore(STORE_VENDORS).add(vendor);
-    request.onsuccess = () => resolve(request.result as number);
-    request.onerror = () => reject(request.error);
-  });
-};
-
-export const updateVendor = (db: IDBDatabase, vendor: Vendor): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_VENDORS, 'readwrite');
-    tx.objectStore(STORE_VENDORS).put(vendor);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-};
-
-export const deleteVendor = (db: IDBDatabase, id: number): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_VENDORS, 'readwrite');
-    tx.objectStore(STORE_VENDORS).delete(id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-};
-
-export const getAllVendors = (db: IDBDatabase): Promise<Vendor[]> => {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_VENDORS, 'readonly');
-    const request = tx.objectStore(STORE_VENDORS).getAll();
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-};
+export const getAllPaymentMethods = (db: IDBDatabase) => getAll<PaymentMethod>(db, STORE_PAYMENT_METHODS);
+export const addPaymentMethod = (db: IDBDatabase, p: PaymentMethod) => add(db, STORE_PAYMENT_METHODS, p);
+export const updatePaymentMethod = (db: IDBDatabase, p: PaymentMethod) => update(db, STORE_PAYMENT_METHODS, p);
+export const deletePaymentMethod = (db: IDBDatabase, id: number) => remove(db, STORE_PAYMENT_METHODS, id);
 
 export const clearAllData = (db: IDBDatabase): Promise<void> => {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([STORE_TRANSACTIONS, STORE_CATEGORIES, STORE_VENDORS, STORE_TEMPLATES], 'readwrite');
+    const tx = db.transaction([STORE_TRANSACTIONS, STORE_CATEGORIES, STORE_MERCHANTS, STORE_TEMPLATES, STORE_PAYMENT_METHODS], 'readwrite');
     tx.objectStore(STORE_TRANSACTIONS).clear();
     tx.objectStore(STORE_CATEGORIES).clear();
-    tx.objectStore(STORE_VENDORS).clear();
+    tx.objectStore(STORE_MERCHANTS).clear();
     tx.objectStore(STORE_TEMPLATES).clear();
+    tx.objectStore(STORE_PAYMENT_METHODS).clear();
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 };
 
-export const importAllData = async (db: IDBDatabase, data: { transactions: Transaction[], categories: Category[], vendors?: Vendor[] }): Promise<void> => {
+export const importAllData = async (db: IDBDatabase, data: any): Promise<void> => {
   await clearAllData(db);
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([STORE_TRANSACTIONS, STORE_CATEGORIES, STORE_VENDORS], 'readwrite');
-    const tStore = tx.objectStore(STORE_TRANSACTIONS);
-    const cStore = tx.objectStore(STORE_CATEGORIES);
-    const vStore = tx.objectStore(STORE_VENDORS);
+    const tx = db.transaction([STORE_TRANSACTIONS, STORE_CATEGORIES, STORE_MERCHANTS, STORE_PAYMENT_METHODS], 'readwrite');
     
-    if (data.transactions) {
-      data.transactions.forEach(t => {
-        const item = { ...t };
-        delete item.id;
-        tStore.add(item);
-      });
-    }
-
-    if (data.categories) {
-      data.categories.forEach(c => {
-        const item = { ...c };
-        delete item.id;
-        cStore.add(item);
-      });
-    }
-
-    if (data.vendors) {
-      data.vendors.forEach(v => {
-        const item = { ...v };
-        delete item.id;
-        vStore.add(item);
-      });
-    }
+    if (data.transactions) data.transactions.forEach((t: any) => { delete t.id; tx.objectStore(STORE_TRANSACTIONS).add(t); });
+    if (data.categories) data.categories.forEach((c: any) => { delete c.id; tx.objectStore(STORE_CATEGORIES).add(c); });
+    if (data.merchants) data.merchants.forEach((m: any) => { delete m.id; tx.objectStore(STORE_MERCHANTS).add(m); });
+    if (data.paymentMethods) data.paymentMethods.forEach((p: any) => { delete p.id; tx.objectStore(STORE_PAYMENT_METHODS).add(p); });
     
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(new Error('Transaction aborted during import'));
   });
 };

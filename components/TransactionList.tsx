@@ -1,29 +1,42 @@
+
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Transaction, TransactionType, Category, Vendor } from '../types';
-import { Search, Trash2, Edit2, ArrowUpDown, Info, X, ChevronRight, Calendar, ExternalLink, AlertCircle, Copy, Bookmark } from 'lucide-react';
+import { Transaction, TransactionType, Category, Merchant, PaymentMethod } from '../types';
+import { Search, Trash2, Edit2, Info, X, ChevronRight, Calendar, AlertCircle, Copy, Bookmark, CreditCard, Tag, Store, Type } from 'lucide-react';
 import TransactionForm from './TransactionForm';
 
 interface TransactionListProps {
   transactions: Transaction[];
   categories: Category[];
-  vendors: Vendor[];
+  merchants: Merchant[];
+  paymentMethods: PaymentMethod[];
   onDelete: (id: number) => void;
   onAddTransaction: (t: Transaction) => void;
   onUpdateTransaction: (t: Transaction) => void;
   onAddCategory: (c: Category) => void;
+  onUpdateCategory: (c: Category) => void;
+  onAddMerchant: (m: Merchant) => void;
   onSaveAsTemplate: (t: Transaction) => void;
 }
 
-type SortKey = 'date' | 'amount' | 'category' | 'subCategory' | 'vendor';
+type SortKey = 'date' | 'amount' | 'category' | 'subCategory' | 'merchant' | 'paymentMethod';
+
+interface SuggestionGroup {
+  label: string;
+  icon: any;
+  items: string[];
+}
 
 const TransactionList: React.FC<TransactionListProps> = ({ 
   transactions, 
   categories, 
-  vendors,
+  merchants,
+  paymentMethods,
   onDelete,
   onAddTransaction,
   onUpdateTransaction,
   onAddCategory,
+  onUpdateCategory,
+  onAddMerchant,
   onSaveAsTemplate
 }) => {
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
@@ -34,29 +47,14 @@ const TransactionList: React.FC<TransactionListProps> = ({
   const [endDate, setEndDate] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'date', direction: 'desc' });
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
-  const [duplicatingTransaction, setDuplicatingTransaction] = useState<Transaction | null>(null);
   const [deletingTransaction, setDeletingTransaction] = useState<Transaction | null>(null);
 
-  const filterContainerRef = useRef<HTMLDivElement>(null);
-  const startDateRef = useRef<HTMLInputElement>(null);
-  const endDateRef = useRef<HTMLInputElement>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setEditingTransaction(null);
-        setDuplicatingTransaction(null);
-        setDeletingTransaction(null);
-        setShowSuggestions(false);
-      }
-    };
-    window.addEventListener('keydown', handleEsc);
-    return () => window.removeEventListener('keydown', handleEsc);
-  }, []);
-
+  // Close suggestions when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (filterContainerRef.current && !filterContainerRef.current.contains(event.target as Node)) {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
         setShowSuggestions(false);
       }
     };
@@ -64,46 +62,44 @@ const TransactionList: React.FC<TransactionListProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const suggestions = useMemo(() => {
-    if (!inputValue.trim()) return { categories: [], subCategories: [], vendors: [], notes: [] };
+  // Grouped search suggestions
+  const groupedSuggestions = useMemo(() => {
+    if (!inputValue.trim()) return [];
+
     const query = inputValue.toLowerCase();
-    
-    const cats = Array.from(new Set(transactions.map(t => t.category)))
-      .filter(c => c.toLowerCase().includes(query))
-      .slice(0, 5);
-      
-    const subs = Array.from(new Set(transactions.map(t => t.subCategory).filter(Boolean)))
-      .filter(s => s!.toLowerCase().includes(query))
-      .slice(0, 5);
-      
-    const vends = Array.from(new Set(transactions.map(t => t.vendor).filter(Boolean)))
-      .filter(v => v!.toLowerCase().includes(query))
-      .slice(0, 5);
+    const groups: Record<string, { label: string; icon: any; items: Set<string> }> = {
+      category: { label: 'Categories', icon: Tag, items: new Set() },
+      subCategory: { label: 'Sub-Categories', icon: Tag, items: new Set() },
+      merchant: { label: 'Payees', icon: Store, items: new Set() },
+      paymentMethod: { label: 'Payment Methods', icon: CreditCard, items: new Set() },
+      description: { label: 'Notes', icon: Type, items: new Set() }
+    };
 
-    const words = new Set<string>();
     transactions.forEach(t => {
-      if (t.description) {
-        t.description.split(/\s+/).forEach(word => {
-          const cleanWord = word.replace(/[.,!?;:()]/g, '');
-          if (cleanWord.length > 2) words.add(cleanWord);
-        });
-      }
+      if (t.category?.toLowerCase().includes(query)) groups.category.items.add(t.category);
+      if (t.subCategory?.toLowerCase().includes(query)) groups.subCategory.items.add(t.subCategory);
+      if (t.merchant?.toLowerCase().includes(query)) groups.merchant.items.add(t.merchant);
+      if (t.paymentMethod?.toLowerCase().includes(query)) groups.paymentMethod.items.add(t.paymentMethod);
+      if (t.description?.toLowerCase().includes(query)) groups.description.items.add(t.description);
     });
-    const noteWords = Array.from(words)
-      .filter(w => w.toLowerCase().includes(query))
-      .slice(0, 5);
 
-    return { categories: cats, subCategories: subs, vendors: vends, notes: noteWords };
+    return Object.values(groups)
+      .map(group => ({
+        ...group,
+        items: Array.from(group.items).sort().slice(0, 5) // Limit each group for UX
+      }))
+      .filter(group => group.items.length > 0);
   }, [transactions, inputValue]);
 
   const filteredTransactions = useMemo(() => {
     let result = transactions.filter(t => {
-      const matchesPills = activeFilters.every(filter => {
+      const matchesPills = activeFilters.length === 0 || activeFilters.every(filter => {
         const f = filter.toLowerCase();
         return (
           t.category.toLowerCase().includes(f) ||
           (t.subCategory || '').toLowerCase().includes(f) ||
-          (t.vendor || '').toLowerCase().includes(f) ||
+          (t.merchant || '').toLowerCase().includes(f) ||
+          (t.paymentMethod || '').toLowerCase().includes(f) ||
           (t.description || '').toLowerCase().includes(f)
         );
       });
@@ -114,225 +110,223 @@ const TransactionList: React.FC<TransactionListProps> = ({
     });
 
     result.sort((a, b) => {
-      let valA = a[sortConfig.key] || '';
-      let valB = b[sortConfig.key] || '';
-      if (typeof valA === 'string' && typeof valB === 'string') {
-        return sortConfig.direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+      let valA = (a[sortConfig.key] || '').toString();
+      let valB = (b[sortConfig.key] || '').toString();
+      if (sortConfig.key === 'amount') {
+        return sortConfig.direction === 'asc' ? a.amount - b.amount : b.amount - a.amount;
       }
-      if (typeof valA === 'number' && typeof valB === 'number') {
-        return sortConfig.direction === 'asc' ? valA - valB : valB - valA;
-      }
-      return 0;
+      return sortConfig.direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
     });
     return result;
   }, [transactions, activeFilters, typeFilter, startDate, endDate, sortConfig]);
 
-  const filteredTotals = useMemo(() => {
-    return filteredTransactions.reduce((acc, t) => {
-      if (t.type === TransactionType.INCOME) acc.income += t.amount;
-      else acc.expense += t.amount;
-      return acc;
-    }, { income: 0, expense: 0 });
-  }, [filteredTransactions]);
-
-  const toggleSort = (key: SortKey) => {
-    setSortConfig(prev => ({
-      key,
-      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
-    }));
-  };
+  const toggleSort = (key: SortKey) => setSortConfig(p => ({ key, direction: p.key === key && p.direction === 'asc' ? 'desc' : 'asc' }));
 
   const addFilter = (val: string) => {
-    const trimmed = val.trim();
-    if (trimmed && !activeFilters.includes(trimmed)) {
-      setActiveFilters([...activeFilters, trimmed]);
+    const clean = val.trim();
+    if (clean && !activeFilters.includes(clean)) {
+      setActiveFilters([...activeFilters, clean]);
     }
     setInputValue('');
     setShowSuggestions(false);
   };
 
-  const removeFilter = (val: string) => {
-    setActiveFilters(activeFilters.filter(f => f !== val));
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && inputValue) {
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
       addFilter(inputValue);
-    } else if (e.key === 'Backspace' && !inputValue && activeFilters.length > 0) {
-      removeFilter(activeFilters[activeFilters.length - 1]);
     }
-  };
-
-  const confirmDelete = () => {
-    if (deletingTransaction && deletingTransaction.id !== undefined) {
-      onDelete(deletingTransaction.id);
-      setDeletingTransaction(null);
-    }
-  };
-
-  const handleDuplicate = (t: Transaction) => {
-    const copy = { ...t };
-    delete copy.id;
-    copy.date = new Date().toISOString().split('T')[0];
-    setDuplicatingTransaction(copy);
   };
 
   return (
-    <div className="space-y-4 relative">
-      {/* Modals for Edit, Duplicate, and Delete */}
+    <div className="space-y-4">
       {editingTransaction && (
-        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl border border-gray-100 overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><Edit2 size={18} /></div>
-                <h3 className="font-black text-gray-800 uppercase tracking-tight text-sm">Edit Transaction</h3>
-              </div>
-              <button onClick={() => setEditingTransaction(null)} className="p-2 hover:bg-gray-200 rounded-full text-gray-400"><X size={20} /></button>
-            </div>
-            <div className="p-6">
-              <TransactionForm categories={categories} transactions={transactions} onAddTransaction={onAddTransaction} onUpdateTransaction={(t) => { onUpdateTransaction(t); setEditingTransaction(null); }} onAddCategory={onAddCategory} editingTransaction={editingTransaction} onCancelEdit={() => setEditingTransaction(null)} />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {duplicatingTransaction && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl border border-gray-100 overflow-hidden">
             <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg"><Copy size={18} /></div>
-                <h3 className="font-black text-gray-800 uppercase tracking-tight text-sm">Duplicate Transaction</h3>
-              </div>
-              <button onClick={() => setDuplicatingTransaction(null)} className="p-2 hover:bg-gray-200 rounded-full text-gray-400"><X size={20} /></button>
+              <h3 className="font-black text-gray-800 uppercase tracking-tight text-sm">Edit Transaction</h3>
+              <button onClick={() => setEditingTransaction(null)} className="p-2 text-gray-400"><X size={20} /></button>
             </div>
             <div className="p-6">
-              <TransactionForm categories={categories} transactions={transactions} onAddTransaction={(t) => { onAddTransaction(t); setDuplicatingTransaction(null); }} onAddCategory={onAddCategory} editingTransaction={duplicatingTransaction} onCancelEdit={() => setDuplicatingTransaction(null)} />
+              <TransactionForm 
+                categories={categories} 
+                paymentMethods={paymentMethods} 
+                transactions={transactions} 
+                onAddTransaction={onAddTransaction} 
+                onUpdateTransaction={(t) => { onUpdateTransaction(t); setEditingTransaction(null); }} 
+                onAddCategory={onAddCategory} 
+                onUpdateCategory={onUpdateCategory}
+                onAddMerchant={onAddMerchant}
+                editingTransaction={editingTransaction} 
+                onCancelEdit={() => setEditingTransaction(null)} 
+              />
             </div>
           </div>
         </div>
       )}
 
+      {/* Delete Confirmation */}
       {deletingTransaction && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-gray-100 overflow-hidden">
-            <div className="p-6 text-center">
-              <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-4"><AlertCircle size={32} /></div>
-              <h3 className="text-xl font-black text-gray-900 mb-2 uppercase">Are you sure?</h3>
-              <p className="text-sm text-gray-500">Delete record for {deletingTransaction.vendor || 'Unknown Vendor'}?</p>
-            </div>
-            <div className="bg-gray-50 p-4 flex gap-3">
-              <button onClick={() => setDeletingTransaction(null)} className="flex-1 px-4 py-2.5 bg-white border rounded-xl font-black text-xs uppercase">Cancel</button>
-              <button onClick={confirmDelete} className="flex-1 px-4 py-2.5 bg-rose-600 text-white rounded-xl font-black text-xs uppercase">Delete</button>
+          <div className="bg-white w-full max-w-md rounded-2xl p-6 text-center border border-gray-100 shadow-2xl">
+            <AlertCircle size={40} className="mx-auto text-rose-500 mb-4" />
+            <h3 className="text-xl font-black uppercase mb-2">Delete Record?</h3>
+            <p className="text-sm text-gray-500 mb-6">This action cannot be undone.</p>
+            <div className="flex gap-3">
+              <button onClick={() => setDeletingTransaction(null)} className="flex-1 py-2 rounded-xl bg-gray-100 font-bold uppercase text-xs">Cancel</button>
+              <button onClick={() => { deletingTransaction.id && onDelete(deletingTransaction.id); setDeletingTransaction(null); }} className="flex-1 py-2 rounded-xl bg-rose-600 text-white font-bold uppercase text-xs">Delete</button>
             </div>
           </div>
         </div>
       )}
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-3 border-b border-gray-50 bg-gray-50/20 flex justify-between items-center">
-            <h3 className="text-[11px] font-black text-gray-400 uppercase tracking-widest">Record Transaction</h3>
-        </div>
-        <div className="p-3">
-            <TransactionForm categories={categories} transactions={transactions} onAddTransaction={onAddTransaction} onAddCategory={onAddCategory} />
-        </div>
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
+        <TransactionForm 
+          categories={categories} 
+          paymentMethods={paymentMethods} 
+          transactions={transactions} 
+          onAddTransaction={onAddTransaction} 
+          onAddCategory={onAddCategory} 
+          onUpdateCategory={onUpdateCategory}
+          onAddMerchant={onAddMerchant}
+        />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-start">
-        <div className="lg:col-span-3 space-y-2 relative" ref={filterContainerRef}>
-          <div className="flex flex-wrap items-center gap-2 p-2 bg-white rounded-xl shadow-sm border border-gray-100 min-h-[44px] transition-all focus-within:ring-2 focus-within:ring-blue-100 focus-within:border-blue-300">
-            <Search size={16} className="text-gray-400 ml-2" />
-            {activeFilters.map(filter => (
-              <span key={filter} className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-semibold rounded-lg border border-blue-100 animate-in zoom-in-95">
-                {filter}
-                <button onClick={() => removeFilter(filter)} className="hover:bg-blue-200 rounded-full p-0.5"><X size={12} /></button>
-              </span>
-            ))}
-            <input
-              type="text" value={inputValue}
-              onChange={(e) => { setInputValue(e.target.value); setShowSuggestions(true); }}
-              onKeyDown={handleKeyDown}
+      <div className="flex flex-wrap gap-4 items-center">
+        <div ref={searchRef} className="flex-1 min-w-[300px] relative">
+          <div className="flex items-center gap-2 px-3 py-2 bg-white rounded-xl border border-gray-100 shadow-sm focus-within:ring-2 focus-within:ring-blue-100 transition-all">
+            <Search size={16} className="text-gray-400" />
+            <input 
+              type="text" 
+              placeholder="Search by Payee, Category, Method or Notes..." 
+              className="flex-1 bg-transparent outline-none text-sm"
+              value={inputValue}
+              onChange={(e) => {
+                setInputValue(e.target.value);
+                setShowSuggestions(true);
+              }}
               onFocus={() => setShowSuggestions(true)}
-              placeholder={activeFilters.length === 0 ? "Search by Vendor, Category, or Notes..." : ""}
-              className="flex-1 min-w-[150px] bg-transparent outline-none text-sm py-1 font-medium text-gray-900 placeholder-gray-400"
+              onKeyDown={handleSearchKeyDown}
             />
           </div>
 
-          {showSuggestions && inputValue.trim() && (
-            <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-              <div className="max-h-72 overflow-y-auto p-2">
-                {Object.entries(suggestions).map(([type, items]) => (
-                  items.length > 0 && (
-                    <div key={type} className="mb-2 last:mb-0">
-                      <div className="px-3 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-50 mb-1">{type}</div>
-                      {items.map(item => (
-                        <button 
-                          key={item} 
-                          onClick={() => addFilter(item)} 
-                          className="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-lg group text-left transition-colors"
-                        >
-                          <span className="font-medium">{item}</span>
-                          <ChevronRight size={14} className="text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </button>
-                      ))}
+          {/* Predictive Custom Dropdown */}
+          {showSuggestions && groupedSuggestions.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 shadow-2xl rounded-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+              <div className="max-h-[350px] overflow-y-auto">
+                {groupedSuggestions.map((group) => (
+                  <div key={group.label} className="border-b border-gray-50 last:border-0">
+                    <div className="px-4 py-2 bg-gray-50 flex items-center gap-2">
+                      <group.icon size={12} className="text-gray-400" />
+                      <span className="text-[10px] font-black uppercase text-gray-400 tracking-wider">{group.label}</span>
                     </div>
-                  )
+                    {group.items.map((item) => (
+                      <button
+                        key={item}
+                        onClick={() => addFilter(item)}
+                        className="w-full text-left px-8 py-2.5 text-xs font-bold text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
                 ))}
               </div>
             </div>
           )}
         </div>
-        <div className="bg-white p-2 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between gap-3 h-[44px]">
-          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as TransactionType | 'ALL')} className="text-xs font-black text-gray-600 uppercase bg-transparent outline-none cursor-pointer flex-1">
-            <option value="ALL">All Types</option>
-            <option value={TransactionType.INCOME}>Income</option>
-            <option value={TransactionType.EXPENSE}>Expense</option>
-          </select>
-          <div className="h-6 w-px bg-gray-100"></div>
-          <span className={`text-sm font-black whitespace-nowrap ${(filteredTotals.income - filteredTotals.expense) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-            ${(filteredTotals.income - filteredTotals.expense).toFixed(2)}
-          </span>
+
+        <div className="flex gap-2">
+          {activeFilters.map(f => (
+            <span key={f} className="flex items-center gap-1 px-3 py-1 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold uppercase border border-blue-100">
+              {f}
+              <button onClick={() => setActiveFilters(activeFilters.filter(x => x !== f))}><X size={12}/></button>
+            </span>
+          ))}
         </div>
+        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as any)} className="px-3 py-2 bg-white rounded-xl border border-gray-100 text-xs font-bold uppercase">
+          <option value="ALL">All Types</option>
+          <option value={TransactionType.INCOME}>Income</option>
+          <option value={TransactionType.EXPENSE}>Expense</option>
+        </select>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-gray-50/50 text-gray-400 text-[10px] uppercase font-bold border-b border-gray-100">
-              <tr>
-                <th className="px-5 py-3.5 cursor-pointer" onClick={() => toggleSort('date')}>Date</th>
-                <th className="px-5 py-3.5 cursor-pointer" onClick={() => toggleSort('category')}>Category</th>
-                <th className="px-5 py-3.5 cursor-pointer" onClick={() => toggleSort('vendor')}>Vendor</th>
-                <th className="px-5 py-3.5 text-right cursor-pointer" onClick={() => toggleSort('amount')}>Amount</th>
-                <th className="px-5 py-3.5 text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {filteredTransactions.map((t) => (
-                  <tr key={t.id} className="group hover:bg-gray-50/80 transition-all">
-                    <td className="px-5 py-4 text-gray-500 text-[11px] whitespace-nowrap font-medium">{t.date}</td>
-                    <td className="px-5 py-4"><span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${t.type === TransactionType.INCOME ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>{t.category}</span></td>
-                    <td className="px-5 py-4"><span className="text-gray-900 font-bold text-sm">{t.vendor || '-'}</span></td>
-                    <td className={`px-5 py-4 text-right font-black text-sm ${t.type === TransactionType.INCOME ? 'text-emerald-600' : 'text-rose-600'}`}>${t.amount.toFixed(2)}</td>
-                    <td className="px-5 py-4 text-center">
-                      <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => onSaveAsTemplate(t)} className="p-1.5 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-md" title="Save as Recurring Template"><Bookmark size={13} /></button>
-                          <button onClick={() => handleDuplicate(t)} className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md" title="Duplicate"><Copy size={13} /></button>
-                          <button onClick={() => setEditingTransaction(t)} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md" title="Edit"><Edit2 size={13} /></button>
-                          <button onClick={() => setDeletingTransaction(t)} className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-md" title="Delete"><Trash2 size={13} /></button>
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead className="bg-gray-50/50 text-gray-400 font-black uppercase tracking-widest border-b border-gray-100">
+            <tr>
+              <th className="px-5 py-3.5 cursor-pointer" onClick={() => toggleSort('date')}>Date</th>
+              <th className="px-5 py-3.5 cursor-pointer" onClick={() => toggleSort('category')}>Category</th>
+              <th className="px-5 py-3.5 cursor-pointer" onClick={() => toggleSort('subCategory')}>Sub-Category</th>
+              <th className="px-5 py-3.5 cursor-pointer" onClick={() => toggleSort('merchant')}>Payee</th>
+              <th className="px-5 py-3.5 cursor-pointer" onClick={() => toggleSort('paymentMethod')}>Method</th>
+              <th className="px-5 py-3.5 text-right cursor-pointer" onClick={() => toggleSort('amount')}>Amount</th>
+              <th className="px-5 py-3.5 text-center">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {filteredTransactions.map(t => (
+              <tr key={t.id} className="hover:bg-gray-50/50 group">
+                <td className="px-5 py-4 text-gray-500 whitespace-nowrap">{t.date}</td>
+                <td className="px-5 py-4">
+                  <span className="px-2 py-0.5 bg-gray-100 rounded font-bold uppercase text-[9px] text-gray-500 whitespace-nowrap">
+                    {t.category}
+                  </span>
+                </td>
+                <td className="px-5 py-4">
+                  {t.subCategory ? (
+                    <span className="text-gray-600 font-medium">{t.subCategory}</span>
+                  ) : (
+                    <span className="text-gray-300 italic">-</span>
+                  )}
+                </td>
+                <td className="px-5 py-4">
+                  <div className="flex items-center gap-2">
+                    {t.merchant ? (
+                      <span className="font-bold text-gray-900">{t.merchant}</span>
+                    ) : (
+                      <span className="text-gray-300 italic">Unspecified</span>
+                    )}
+                    {t.description && (
+                      <div className="group/note relative inline-block">
+                        <Info size={12} className="text-gray-300 cursor-help hover:text-blue-500 transition-colors" />
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-[10px] rounded-lg opacity-0 group-hover/note:opacity-100 pointer-events-none transition-all duration-200 transform translate-y-1 group-hover/note:translate-y-0 whitespace-nowrap z-50 shadow-xl font-medium">
+                          {t.description}
+                          <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                        </div>
                       </div>
-                    </td>
-                  </tr>
-              ))}
-              {filteredTransactions.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-gray-400 italic">No transactions found matching your filters.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                    )}
+                  </div>
+                </td>
+                <td className="px-5 py-4">
+                  {t.paymentMethod ? (
+                    <div className="flex items-center gap-1.5 text-gray-600 font-medium whitespace-nowrap">
+                      <CreditCard size={12} className="text-gray-400" />
+                      {t.paymentMethod}
+                    </div>
+                  ) : (
+                    <span className="text-gray-300 italic">-</span>
+                  )}
+                </td>
+                <td className={`px-5 py-4 text-right font-black whitespace-nowrap ${t.type === TransactionType.INCOME ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  ${t.amount.toFixed(2)}
+                </td>
+                <td className="px-5 py-4 text-center">
+                  <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => setEditingTransaction(t)} className="p-1 text-gray-400 hover:text-blue-600"><Edit2 size={14} /></button>
+                    <button onClick={() => setDeletingTransaction(t)} className="p-1 text-gray-400 hover:text-rose-600"><Trash2 size={14} /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {filteredTransactions.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-5 py-20 text-center text-gray-400 italic">
+                  No transactions found matching your search.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
