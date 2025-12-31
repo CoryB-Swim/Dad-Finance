@@ -67,6 +67,10 @@ const App: React.FC = () => {
   
   const [isSyncing, setIsSyncing] = useState(false);
   const [isDriveConnected, setIsDriveConnected] = useState(false);
+  
+  // State for cross-view navigation filters
+  const [initialListFilter, setInitialListFilter] = useState<string | null>(null);
+  const [targetMerchantName, setTargetMerchantName] = useState<string | null>(null);
 
   const legacyFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -174,7 +178,7 @@ const App: React.FC = () => {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `fintrack-export-${new Date().toISOString().split('T')[0]}.json`;
+      link.download = `dad-finance-export-${new Date().toISOString().split('T')[0]}.json`;
       link.click();
       URL.revokeObjectURL(url);
       showNotification('Data exported');
@@ -343,8 +347,28 @@ const App: React.FC = () => {
 
   // Categories / Merchants / Payments handlers
   const handleAddCategory = (c: Category) => addCategory(db!, c).then(refreshData);
-  const handleUpdateCategory = (c: Category) => updateCategory(db!, c).then(refreshData);
+  
+  const handleUpdateCategory = async (newCat: Category) => {
+    if (!db) return;
+    const oldCat = categories.find(c => c.id === newCat.id);
+    if (!oldCat) return;
+
+    await updateCategory(db, newCat);
+
+    // If name changed, update all transactions linked to this category
+    if (oldCat.name !== newCat.name) {
+      const txsToUpdate = transactions.filter(t => t.category === oldCat.name);
+      for (const t of txsToUpdate) {
+        await updateTransaction(db, { ...t, category: newCat.name });
+      }
+    }
+    
+    await refreshData();
+    showNotification('Category updated');
+  };
+
   const handleDeleteCategory = (id: number) => deleteCategory(db!, id).then(refreshData);
+  
   const handleDeleteSubCategory = async (catId: number, subName: string) => {
     const cat = categories.find(c => c.id === catId);
     if (cat) {
@@ -353,8 +377,45 @@ const App: React.FC = () => {
     }
   };
 
+  const handleRenameSubCategory = async (catId: number, oldName: string, newName: string) => {
+    if (!db) return;
+    const cat = categories.find(c => c.id === catId);
+    if (!cat) return;
+
+    const updatedSubs = (cat.subCategories || []).map(s => s === oldName ? newName : s);
+    await updateCategory(db, { ...cat, subCategories: updatedSubs });
+
+    // Update all transactions with this sub-category
+    const txsToUpdate = transactions.filter(t => t.category === cat.name && t.subCategory === oldName);
+    for (const t of txsToUpdate) {
+      await updateTransaction(db, { ...t, subCategory: newName });
+    }
+
+    await refreshData();
+    showNotification('Sub-category renamed');
+  };
+
   const handleAddMerchant = (v: Merchant) => addMerchant(db!, v).then(refreshData);
-  const handleUpdateMerchant = (v: Merchant) => updateMerchant(db!, v).then(refreshData);
+  
+  const handleUpdateMerchant = async (newMerchant: Merchant) => {
+    if (!db) return;
+    const oldMerchant = merchants.find(m => m.id === newMerchant.id);
+    if (!oldMerchant) return;
+
+    await updateMerchant(db, newMerchant);
+
+    // If name changed, update all transactions linked to this merchant
+    if (oldMerchant.name !== newMerchant.name) {
+      const txsToUpdate = transactions.filter(t => t.merchant === oldMerchant.name);
+      for (const t of txsToUpdate) {
+        await updateTransaction(db, { ...t, merchant: newMerchant.name });
+      }
+    }
+
+    await refreshData();
+    showNotification('Merchant updated');
+  };
+
   const handleDeleteMerchant = (id: number) => deleteMerchant(db!, id).then(refreshData);
 
   const handleAddPaymentMethod = (p: PaymentMethod) => addPaymentMethod(db!, p).then(refreshData);
@@ -362,6 +423,13 @@ const App: React.FC = () => {
   const handleDeletePaymentMethod = (id: number) => deletePaymentMethod(db!, id).then(refreshData);
 
   // Templates
+  const handleAddTemplate = (t: RecurringTemplate) => {
+    addTemplate(db!, t).then(() => {
+      refreshData();
+      showNotification('Template created');
+    });
+  };
+
   const handleSaveAsTemplate = (t: Transaction) => {
     const tmp: RecurringTemplate = {
       name: t.merchant || t.category,
@@ -406,7 +474,7 @@ const App: React.FC = () => {
       <aside className="w-20 lg:w-64 bg-white border-r border-gray-200 p-4 flex flex-col fixed h-full z-10">
         <div className="mb-8 px-4 flex items-center gap-3">
           <div className="bg-blue-600 p-2 rounded-lg"><LayoutDashboard className="text-white" size={24} /></div>
-          <h1 className="text-xl font-bold hidden lg:block uppercase tracking-tighter">FinTrack</h1>
+          <h1 className="text-xl font-bold hidden lg:block uppercase tracking-tighter">Dad Finance</h1>
         </div>
         <nav className="flex-1 space-y-2">
           <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
@@ -459,10 +527,16 @@ const App: React.FC = () => {
               onAddCategory={handleAddCategory} 
               onUpdateCategory={handleUpdateCategory}
               onAddMerchant={handleAddMerchant}
-              onSaveAsTemplate={handleSaveAsTemplate} 
+              onSaveAsTemplate={handleSaveAsTemplate}
+              initialFilter={initialListFilter}
+              onClearInitialFilter={() => setInitialListFilter(null)}
+              onViewMerchantDetail={(name) => {
+                setTargetMerchantName(name);
+                setActiveView('merchants');
+              }}
             />
           )}
-          {activeView === 'templates' && <Templates templates={templates} onPost={handlePostTemplate} onDelete={handleDeleteTemplate} onUpdate={handleUpdateTemplate} transactions={transactions} categories={categories} paymentMethods={paymentMethods} />}
+          {activeView === 'templates' && <Templates templates={templates} onPost={handlePostTemplate} onDelete={handleDeleteTemplate} onUpdate={handleUpdateTemplate} onAdd={handleAddTemplate} transactions={transactions} categories={categories} paymentMethods={paymentMethods} />}
           {activeView === 'reports' && <Reports transactions={transactions} categories={categories} />}
           {(['categories', 'merchants', 'payments', 'backups'].includes(activeView)) && (
             <Management 
@@ -473,6 +547,7 @@ const App: React.FC = () => {
               onUpdateCategory={handleUpdateCategory}
               onDeleteCategory={handleDeleteCategory}
               onDeleteSubCategory={handleDeleteSubCategory}
+              onRenameSubCategory={handleRenameSubCategory}
               merchants={merchants}
               onAddMerchant={handleAddMerchant}
               onUpdateMerchant={handleUpdateMerchant}
@@ -483,6 +558,12 @@ const App: React.FC = () => {
               onDeletePaymentMethod={handleDeletePaymentMethod}
               onExport={handleExportData}
               onImport={handleImportData}
+              onViewMerchantTransactions={(name) => {
+                setInitialListFilter(name);
+                setActiveView('list');
+              }}
+              targetMerchantName={targetMerchantName}
+              onClearTargetMerchant={() => setTargetMerchantName(null)}
             />
           )}
         </div>

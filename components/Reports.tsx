@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState } from 'react';
 import { Transaction, TransactionType, Category } from '../types';
 import { 
@@ -25,7 +24,8 @@ import {
   ArrowUpRight, 
   ArrowDownRight, 
   Calendar,
-  Layers
+  Layers,
+  RotateCcw
 } from 'lucide-react';
 
 interface ReportsProps {
@@ -36,16 +36,39 @@ interface ReportsProps {
 type ReportTab = 'overview' | 'monthly' | 'merchants' | 'categories';
 
 const COLORS = ['#10B981', '#3B82F6', '#8B5CF6', '#F59E0B', '#EF4444', '#EC4899', '#06B6D4', '#6366F1', '#14B8A6', '#F97316'];
-
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
   const [activeTab, setActiveTab] = useState<ReportTab>('overview');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
 
-  // Common Data processing
-  const sortedTransactions = useMemo(() => {
-    return [...transactions].sort((a, b) => a.date.localeCompare(b.date));
-  }, [transactions]);
+  // Presets
+  const setThisYear = () => {
+    const year = new Date().getFullYear();
+    setStartDate(`${year}-01-01`);
+    setEndDate(`${year}-12-31`);
+  };
+
+  const setLastYear = () => {
+    const year = new Date().getFullYear() - 1;
+    setStartDate(`${year}-01-01`);
+    setEndDate(`${year}-12-31`);
+  };
+
+  const clearRange = () => {
+    setStartDate('');
+    setEndDate('');
+  };
+
+  // Filtered transactions based on date range
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter(t => {
+      const matchesStart = !startDate || t.date >= startDate;
+      const matchesEnd = !endDate || t.date <= endDate;
+      return matchesStart && matchesEnd;
+    }).sort((a, b) => a.date.localeCompare(b.date));
+  }, [transactions, startDate, endDate]);
 
   // 1. Monthly Grid Data
   const monthlyGridData = useMemo(() => {
@@ -53,7 +76,7 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
     const incomeCats = new Set<string>();
     const expenseCats = new Set<string>();
 
-    sortedTransactions.forEach(t => {
+    filteredTransactions.forEach(t => {
       const date = new Date(t.date);
       const monthIdx = date.getMonth();
       const cat = t.category;
@@ -70,17 +93,16 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
       incomeCats: Array.from(incomeCats).sort(), 
       expenseCats: Array.from(expenseCats).sort() 
     };
-  }, [sortedTransactions]);
+  }, [filteredTransactions]);
 
   // 2. Trend Chart Data
   const trendData = useMemo(() => {
     const months: Record<number, { income: number; expenses: number; balance: number }> = {};
     let cumulative = 0;
 
-    // Pre-fill all months
     for(let i=0; i<12; i++) months[i] = { income: 0, expenses: 0, balance: 0 };
 
-    sortedTransactions.forEach(t => {
+    filteredTransactions.forEach(t => {
       const monthIdx = new Date(t.date).getMonth();
       if (t.type === TransactionType.INCOME) {
         months[monthIdx].income += t.amount;
@@ -96,12 +118,12 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
       name: MONTH_NAMES[parseInt(idx)],
       ...data
     }));
-  }, [sortedTransactions]);
+  }, [filteredTransactions]);
 
   // 3. Merchant Data
   const merchantStats = useMemo(() => {
     const stats: Record<string, { total: number; count: number; category: string }> = {};
-    transactions.forEach(t => {
+    filteredTransactions.forEach(t => {
       if (!t.merchant) return;
       if (!stats[t.merchant]) stats[t.merchant] = { total: 0, count: 0, category: t.category };
       stats[t.merchant].total += t.amount;
@@ -110,14 +132,14 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
     return Object.entries(stats)
       .map(([name, s]) => ({ name, ...s, average: s.total / s.count }))
       .sort((a, b) => b.total - a.total);
-  }, [transactions]);
+  }, [filteredTransactions]);
 
   // 4. Category Average Data
   const categoryAverages = useMemo(() => {
     const totals: Record<string, number> = {};
     const monthCounts: Record<string, Set<number>> = {};
     
-    transactions.filter(t => t.type === TransactionType.EXPENSE).forEach(t => {
+    filteredTransactions.filter(t => t.type === TransactionType.EXPENSE).forEach(t => {
       const month = new Date(t.date).getMonth();
       totals[t.category] = (totals[t.category] || 0) + t.amount;
       if (!monthCounts[t.category]) monthCounts[t.category] = new Set();
@@ -129,14 +151,12 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
       total,
       average: total / Math.max(monthCounts[name].size, 1)
     })).sort((a, b) => b.average - a.average);
-  }, [transactions]);
+  }, [filteredTransactions]);
 
   const SummaryTable = () => {
     const { grid, incomeCats, expenseCats } = monthlyGridData;
-    
     const getRowTotal = (cat: string) => Object.values(grid[cat] || {}).reduce((a, b) => a + b, 0);
     const getMonthTotal = (monthIdx: number, cats: string[]) => cats.reduce((sum, cat) => sum + (grid[cat]?.[monthIdx] || 0), 0);
-    
     const totalIncome = (m: number) => getMonthTotal(m, incomeCats);
     const totalExpenses = (m: number) => getMonthTotal(m, expenseCats);
 
@@ -154,7 +174,6 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {/* Top Summary Block */}
             <tr className="bg-white hover:bg-gray-50/50">
               <td className="px-4 py-3 font-bold text-gray-900 sticky left-0 bg-white">Income</td>
               {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-3 text-center text-emerald-600 font-medium">${totalIncome(i).toLocaleString(undefined, {maximumFractionDigits:0})}</td>)}
@@ -185,8 +204,6 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
               <td className="px-3 py-3 text-center border-l"></td>
               <td className="px-3 py-3 text-center text-gray-400"></td>
             </tr>
-
-            {/* Income Detailed Section */}
             <tr className="bg-gray-50/80"><td colSpan={15} className="px-4 py-2 font-black text-emerald-700 uppercase tracking-widest text-[9px]">Income Categories</td></tr>
             {incomeCats.map(cat => (
               <tr key={cat} className="hover:bg-gray-50">
@@ -196,8 +213,6 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
                 <td className="px-3 py-2.5 text-center text-gray-400">${(getRowTotal(cat) / 12).toLocaleString(undefined, {maximumFractionDigits:0})}</td>
               </tr>
             ))}
-
-            {/* Expense Detailed Section */}
             <tr className="bg-gray-50/80"><td colSpan={15} className="px-4 py-2 font-black text-rose-700 uppercase tracking-widest text-[9px]">Expense Categories</td></tr>
             {expenseCats.map(cat => (
               <tr key={cat} className="hover:bg-gray-50">
@@ -227,11 +242,32 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex bg-gray-100 p-1 rounded-xl w-fit">
-        <NavItem id="overview" icon={TrendingUp} label="Overview" />
-        <NavItem id="monthly" icon={TableIcon} label="Monthly Grid" />
-        <NavItem id="merchants" icon={Store} label="Merchants" />
-        <NavItem id="categories" icon={Layers} label="Categories" />
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex bg-gray-100 p-1 rounded-xl w-fit">
+          <NavItem id="overview" icon={TrendingUp} label="Overview" />
+          <NavItem id="monthly" icon={TableIcon} label="Monthly Grid" />
+          <NavItem id="merchants" icon={Store} label="Merchants" />
+          <NavItem id="categories" icon={Layers} label="Categories" />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 bg-white p-3 rounded-2xl shadow-sm border border-gray-100">
+          <div className="flex items-center gap-2 border-r pr-4 border-gray-100 mr-2">
+            <Calendar size={14} className="text-gray-400" />
+            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Report Range</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="px-3 py-1 bg-gray-50 border border-gray-100 rounded-lg text-xs font-bold h-9 outline-none focus:bg-white transition-all" />
+            <span className="text-gray-300 font-bold text-xs">to</span>
+            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="px-3 py-1 bg-gray-50 border border-gray-100 rounded-lg text-xs font-bold h-9 outline-none focus:bg-white transition-all" />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={setThisYear} className="px-3 py-1.5 bg-white border border-gray-200 text-gray-600 rounded-lg text-[10px] font-black uppercase hover:border-blue-300 hover:text-blue-600 transition-all shadow-sm">This Year</button>
+            <button onClick={setLastYear} className="px-3 py-1.5 bg-white border border-gray-200 text-gray-600 rounded-lg text-[10px] font-black uppercase hover:border-blue-300 hover:text-blue-600 transition-all shadow-sm">Last Year</button>
+            {(startDate || endDate) && (
+              <button onClick={clearRange} className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-all"><RotateCcw size={14} /></button>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -245,9 +281,7 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
                     <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 11, fontWeight: 600, fill: '#94a3b8'}} />
                     <YAxis axisLine={false} tickLine={false} tick={{fontSize: 11, fontWeight: 600, fill: '#94a3b8'}} />
-                    <Tooltip 
-                      contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
-                    />
+                    <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
                     <Legend />
                     <Line type="monotone" dataKey="income" stroke="#10B981" strokeWidth={4} dot={{r: 4, strokeWidth: 2}} name="Income" />
                     <Line type="monotone" dataKey="expenses" stroke="#EF4444" strokeWidth={4} dot={{r: 4, strokeWidth: 2}} name="Expenses" />
@@ -256,7 +290,6 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
                 </ResponsiveContainer>
               </div>
             </div>
-
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Savings</p>
@@ -279,26 +312,16 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
             </div>
           </div>
         )}
-
         {activeTab === 'monthly' && <SummaryTable />}
-
         {activeTab === 'merchants' && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-             <div className="p-6 border-b border-gray-50">
-               <h3 className="text-lg font-black text-gray-800 uppercase tracking-tight">Merchant Loyalty Analysis</h3>
-             </div>
+             <div className="p-6 border-b border-gray-50"><h3 className="text-lg font-black text-gray-800 uppercase tracking-tight">Merchant Loyalty Analysis</h3></div>
              <table className="w-full text-left">
                <thead className="bg-gray-50/50 text-[10px] font-black uppercase text-gray-400 border-b border-gray-100">
-                 <tr>
-                   <th className="px-6 py-4">Merchant</th>
-                   <th className="px-6 py-4">Core Category</th>
-                   <th className="px-6 py-4 text-center">Visits</th>
-                   <th className="px-6 py-4 text-right">Avg Spend</th>
-                   <th className="px-6 py-4 text-right">Total Life Spend</th>
-                 </tr>
+                 <tr><th className="px-6 py-4">Merchant</th><th className="px-6 py-4">Core Category</th><th className="px-6 py-4 text-center">Visits</th><th className="px-6 py-4 text-right">Avg Spend</th><th className="px-6 py-4 text-right">Total Period Spend</th></tr>
                </thead>
                <tbody className="divide-y divide-gray-50">
-                 {merchantStats.map((m, idx) => (
+                 {merchantStats.map((m) => (
                    <tr key={m.name} className="hover:bg-gray-50 transition-colors">
                      <td className="px-6 py-4 font-bold text-gray-900">{m.name}</td>
                      <td className="px-6 py-4"><span className="text-[10px] font-black px-2 py-0.5 bg-gray-100 rounded text-gray-500 uppercase">{m.category}</span></td>
@@ -311,7 +334,6 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
              </table>
           </div>
         )}
-
         {activeTab === 'categories' && (
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -320,39 +342,20 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={categoryAverages} margin={{ bottom: 100 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                    <XAxis 
-                      dataKey="name" 
-                      angle={-45} 
-                      textAnchor="end" 
-                      interval={0}
-                      tick={{fontSize: 10, fontWeight: 700, fill: '#64748b'}}
-                      axisLine={false}
-                      tickLine={false}
-                    />
+                    <XAxis dataKey="name" angle={-45} textAnchor="end" interval={0} tick={{fontSize: 10, fontWeight: 700, fill: '#64748b'}} axisLine={false} tickLine={false} />
                     <YAxis axisLine={false} tickLine={false} tick={{fontSize: 11, fontWeight: 600, fill: '#94a3b8'}} />
-                    <Tooltip 
-                      cursor={{fill: '#f8fafc'}}
-                      contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
-                    />
+                    <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
                     <Bar dataKey="average" radius={[6, 6, 0, 0]} barSize={40}>
-                      {categoryAverages.map((_, index) => (
-                        <Cell key={`cell-${index}`} fill="#E07A5F" />
-                      ))}
+                      {categoryAverages.map((_, index) => <Cell key={`cell-${index}`} fill="#E07A5F" />)}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
-
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                <table className="w-full text-left">
                   <thead className="bg-gray-50/50 text-[10px] font-black uppercase text-gray-400 border-b border-gray-100">
-                    <tr>
-                      <th className="px-6 py-4">Category</th>
-                      <th className="px-6 py-4 text-right">Total Spent (Year)</th>
-                      <th className="px-6 py-4 text-right">Monthly Average</th>
-                      <th className="px-6 py-4 text-right">% of Outgoings</th>
-                    </tr>
+                    <tr><th className="px-6 py-4">Category</th><th className="px-6 py-4 text-right">Total Spent</th><th className="px-6 py-4 text-right">Monthly Average</th><th className="px-6 py-4 text-right">% of Outgoings</th></tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {categoryAverages.map(c => {
@@ -362,11 +365,7 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
                           <td className="px-6 py-4 font-bold text-gray-900">{c.name}</td>
                           <td className="px-6 py-4 text-right font-medium text-gray-600">${c.total.toLocaleString()}</td>
                           <td className="px-6 py-4 text-right font-black text-gray-800">${c.average.toLocaleString(undefined, {maximumFractionDigits:0})}</td>
-                          <td className="px-6 py-4 text-right">
-                             <span className="text-xs font-black text-rose-500 bg-rose-50 px-2 py-1 rounded">
-                               {((c.total / grandTotal) * 100).toFixed(1)}%
-                             </span>
-                          </td>
+                          <td className="px-6 py-4 text-right"><span className="text-xs font-black text-rose-500 bg-rose-50 px-2 py-1 rounded">{((c.total / grandTotal) * 100).toFixed(1)}%</span></td>
                         </tr>
                       )
                     })}

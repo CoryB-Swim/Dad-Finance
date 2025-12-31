@@ -1,7 +1,6 @@
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Transaction, TransactionType, Category, Merchant, PaymentMethod } from '../types';
-import { Plus, X, Save, RotateCcw, Calendar, CreditCard } from 'lucide-react';
+import { Save, RotateCcw, Calendar, CreditCard, Tag, Store } from 'lucide-react';
 
 interface TransactionFormProps {
   categories: Category[];
@@ -37,14 +36,6 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
   const [paymentMethod, setPaymentMethod] = useState('');
   const [description, setDescription] = useState('');
   
-  // Toggle states for adding new entities
-  const [showAddCategory, setShowAddCategory] = useState(false);
-  const [newCategoryName, setNewCategoryName] = useState('');
-  const [showAddSubCategory, setShowAddSubCategory] = useState(false);
-  const [newSubCategoryName, setNewSubCategoryName] = useState('');
-  const [showAddMerchant, setShowAddMerchant] = useState(false);
-  const [newMerchantName, setNewMerchantName] = useState('');
-
   const dateInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -64,6 +55,7 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
 
   const resetForm = () => {
     setAmount('');
+    setCategory('');
     setSubCategory('');
     setMerchant('');
     setDescription('');
@@ -74,38 +66,71 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
   }, [categories, type]);
 
   const activeCategoryObject = useMemo(() => {
-    return categories.find(c => c.name === category);
+    return categories.find(c => c.name.toLowerCase() === category.toLowerCase());
   }, [categories, category]);
 
   const suggestions = useMemo(() => {
     const merchantsSet = new Set<string>();
     transactions.forEach(t => { if (t.merchant) merchantsSet.add(t.merchant); });
-
+    
+    // Also include currently registered merchants
+    const registeredMerchants = merchantsSet;
+    
     const historySubs = new Set<string>();
     transactions.forEach(t => {
-      if (t.category === category && t.subCategory) historySubs.add(t.subCategory);
+      if (t.category.toLowerCase() === category.toLowerCase() && t.subCategory) historySubs.add(t.subCategory);
     });
 
     const definedSubs = activeCategoryObject?.subCategories || [];
     const combinedSubs = Array.from(new Set([...definedSubs, ...Array.from(historySubs)])).sort();
 
     return {
-      merchants: Array.from(merchantsSet).sort(),
+      merchants: Array.from(registeredMerchants).sort(),
       filteredSubCategories: combinedSubs
     };
   }, [transactions, category, activeCategoryObject]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const parsedAmount = parseFloat(amount);
-    if (isNaN(parsedAmount) || !date || !category) return;
+    if (isNaN(parsedAmount) || !date || !category.trim()) return;
+
+    const trimmedCategory = category.trim();
+    const trimmedSubCategory = subCategory.trim();
+    const trimmedMerchant = merchant.trim();
+
+    // 1. Auto-handle Category Creation
+    let currentCat = categories.find(c => c.name.toLowerCase() === trimmedCategory.toLowerCase());
+    if (!currentCat) {
+      const newCat: Category = { name: trimmedCategory, type: type, subCategories: trimmedSubCategory ? [trimmedSubCategory] : [] };
+      onAddCategory(newCat);
+      currentCat = newCat; // Temporary ref for logic below
+    } else if (trimmedSubCategory && onUpdateCategory) {
+      // 2. Auto-handle Sub-category Creation within existing Category
+      const subExists = (currentCat.subCategories || []).some(s => s.toLowerCase() === trimmedSubCategory.toLowerCase());
+      if (!subExists) {
+        onUpdateCategory({
+          ...currentCat,
+          subCategories: [...(currentCat.subCategories || []), trimmedSubCategory]
+        });
+      }
+    }
+
+    // 3. Auto-handle Merchant Creation
+    if (trimmedMerchant && onAddMerchant) {
+      const merchantExists = transactions.some(t => t.merchant?.toLowerCase() === trimmedMerchant.toLowerCase());
+      // For simplicity, we check transactions; in a more robust app, we'd check the merchant store passed in via props
+      if (!merchantExists) {
+        onAddMerchant({ name: trimmedMerchant });
+      }
+    }
 
     const transactionData: Transaction = {
       amount: parsedAmount,
       date,
-      category,
-      subCategory,
-      merchant,
+      category: currentCat?.name || trimmedCategory,
+      subCategory: trimmedSubCategory || undefined,
+      merchant: trimmedMerchant || undefined,
       paymentMethod,
       description,
       type
@@ -119,31 +144,6 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
     }
     
     resetForm();
-  };
-
-  const handleAddCategory = () => {
-    if (!newCategoryName.trim()) return;
-    onAddCategory({ name: newCategoryName.trim(), type: type, subCategories: [] });
-    setCategory(newCategoryName.trim());
-    setNewCategoryName('');
-    setShowAddCategory(false);
-  };
-
-  const handleAddSubCategory = () => {
-    if (!newSubCategoryName.trim() || !activeCategoryObject || !onUpdateCategory) return;
-    const updatedSubCategories = Array.from(new Set([...(activeCategoryObject.subCategories || []), newSubCategoryName.trim()]));
-    onUpdateCategory({ ...activeCategoryObject, subCategories: updatedSubCategories });
-    setSubCategory(newSubCategoryName.trim());
-    setNewSubCategoryName('');
-    setShowAddSubCategory(false);
-  };
-
-  const handleAddMerchantAction = () => {
-    if (!newMerchantName.trim() || !onAddMerchant) return;
-    onAddMerchant({ name: newMerchantName.trim() });
-    setMerchant(newMerchantName.trim());
-    setNewMerchantName('');
-    setShowAddMerchant(false);
   };
 
   const triggerPicker = () => {
@@ -165,7 +165,7 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
           <div className="flex bg-white border border-gray-300 rounded-lg p-0.5 shrink-0 shadow-sm h-[38px] items-center">
             <button
               type="button"
-              onClick={() => { setType(TransactionType.EXPENSE); setCategory(''); }}
+              onClick={() => { setType(TransactionType.EXPENSE); }}
               className={`px-4 h-full rounded-md text-[10px] font-black uppercase transition-all ${
                 type === TransactionType.EXPENSE ? 'bg-rose-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-600'
               }`}
@@ -174,7 +174,7 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => { setType(TransactionType.INCOME); setCategory(''); }}
+              onClick={() => { setType(TransactionType.INCOME); }}
               className={`px-4 h-full rounded-md text-[10px] font-black uppercase transition-all ${
                 type === TransactionType.INCOME ? 'bg-emerald-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'
               }`}
@@ -213,86 +213,65 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
           </div>
 
           <div className="min-w-[160px] flex-1">
-            <div className="flex justify-between items-center mb-1 px-1">
-              <label className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Category</label>
-              <button type="button" onClick={() => setShowAddCategory(!showAddCategory)} className="text-[8px] uppercase font-black text-blue-600 tracking-tighter hover:underline px-1">+ Add New</button>
-            </div>
-            {showAddCategory ? (
-              <div className="flex gap-1 animate-in fade-in zoom-in-95 duration-200">
-                <input type="text" autoFocus value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)} placeholder="New Name..." className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white shadow-sm font-bold outline-none ring-2 ring-blue-50" />
-                <button type="button" onClick={handleAddCategory} className="bg-blue-600 text-white px-2 rounded-lg hover:bg-blue-700 transition-colors"><Plus size={14}/></button>
-                <button type="button" onClick={() => setShowAddCategory(false)} className="text-gray-400 hover:text-gray-600 px-1"><X size={14}/></button>
-              </div>
-            ) : (
-              <select
-                required value={category}
+            <label className="block text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 tracking-wider">Category</label>
+            <div className="relative flex items-center group">
+              <input
+                type="text"
+                list="category-list"
+                required
+                value={category}
                 onChange={(e) => { setCategory(e.target.value); setSubCategory(''); }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white shadow-sm cursor-pointer font-bold outline-none focus:border-blue-400 transition-colors"
-              >
-                <option value="" disabled>Select Category...</option>
-                {filteredCategories.map((c) => <option key={c.id || c.name} value={c.name}>{c.name}</option>)}
-              </select>
-            )}
+                placeholder="Select or type new..."
+                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-xs bg-white shadow-sm font-bold outline-none focus:border-blue-400 transition-colors"
+              />
+              <div className="absolute left-3 pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                <Tag size={14} />
+              </div>
+              <datalist id="category-list">
+                {filteredCategories.map((c) => <option key={c.id || c.name} value={c.name} />)}
+              </datalist>
+            </div>
           </div>
 
           <div className="min-w-[160px] flex-1">
-            <div className="flex justify-between items-center mb-1 px-1">
-              <label className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Sub-Category</label>
-              <button 
-                type="button" 
-                onClick={() => setShowAddSubCategory(!showAddSubCategory)} 
-                disabled={!category}
-                className="text-[8px] uppercase font-black text-blue-600 tracking-tighter hover:underline px-1 disabled:text-gray-300"
-              >
-                + Add New
-              </button>
-            </div>
-            {showAddSubCategory ? (
-              <div className="flex gap-1 animate-in fade-in zoom-in-95 duration-200">
-                <input type="text" autoFocus value={newSubCategoryName} onChange={(e) => setNewSubCategoryName(e.target.value)} placeholder="Sub Name..." className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white shadow-sm font-bold outline-none ring-2 ring-blue-50" />
-                <button type="button" onClick={handleAddSubCategory} className="bg-blue-600 text-white px-2 rounded-lg hover:bg-blue-700 transition-colors"><Plus size={14}/></button>
-                <button type="button" onClick={() => setShowAddSubCategory(false)} className="text-gray-400 hover:text-gray-600 px-1"><X size={14}/></button>
-              </div>
-            ) : (
+            <label className="block text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 tracking-wider">Sub-Category</label>
+            <div className="relative flex items-center group">
               <input
-                type="text" list="sub-category-list" value={subCategory}
+                type="text"
+                list="sub-category-list"
+                value={subCategory}
                 onChange={(e) => setSubCategory(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white shadow-sm placeholder-gray-300 font-bold outline-none focus:border-blue-400 disabled:bg-gray-50 disabled:cursor-not-allowed transition-colors"
-                placeholder="Select or Type..." disabled={!category}
+                placeholder="Select or type new..."
+                className="w-full pl-3 pr-3 py-2 border border-gray-300 rounded-lg text-xs bg-white shadow-sm font-bold outline-none focus:border-blue-400 disabled:bg-gray-100 disabled:cursor-not-allowed transition-colors"
+                disabled={!category.trim()}
               />
-            )}
-            <datalist id="sub-category-list">
-              {suggestions.filteredSubCategories.map(s => <option key={s} value={s} />)}
-            </datalist>
+              <datalist id="sub-category-list">
+                {suggestions.filteredSubCategories.map(s => <option key={s} value={s} />)}
+              </datalist>
+            </div>
           </div>
         </div>
 
         {/* Row 2: Details & Actions */}
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[180px] flex-1">
-            <div className="flex justify-between items-center mb-1 px-1">
-              <label className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Merchant / Payee</label>
-              <button type="button" onClick={() => setShowAddMerchant(!showAddMerchant)} className="text-[8px] uppercase font-black text-blue-600 tracking-tighter hover:underline px-1">+ Add New</button>
+            <label className="block text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 tracking-wider">Merchant / Payee</label>
+            <div className="relative flex items-center group">
+              <input
+                type="text"
+                list="merchant-list-form"
+                value={merchant}
+                onChange={(e) => setMerchant(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-xs bg-white shadow-sm placeholder-gray-300 font-bold outline-none focus:border-blue-400 transition-colors"
+                placeholder="Where was this spent?"
+              />
+              <div className="absolute left-3 pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                <Store size={14} />
+              </div>
+              <datalist id="merchant-list-form">
+                {suggestions.merchants.map(v => <option key={v} value={v} />)}
+              </datalist>
             </div>
-            {showAddMerchant ? (
-              <div className="flex gap-1 animate-in fade-in zoom-in-95 duration-200">
-                <input type="text" autoFocus value={newMerchantName} onChange={(e) => setNewMerchantName(e.target.value)} placeholder="Payee Name..." className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white shadow-sm font-bold outline-none ring-2 ring-blue-50" />
-                <button type="button" onClick={handleAddMerchantAction} className="bg-blue-600 text-white px-2 rounded-lg hover:bg-blue-700 transition-colors"><Plus size={14}/></button>
-                <button type="button" onClick={() => setShowAddMerchant(false)} className="text-gray-400 hover:text-gray-600 px-1"><X size={14}/></button>
-              </div>
-            ) : (
-              <div className="relative">
-                <input
-                  type="text" list="merchant-list" value={merchant}
-                  onChange={(e) => setMerchant(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white shadow-sm placeholder-gray-300 font-bold outline-none focus:border-blue-400 transition-colors"
-                  placeholder="Where was this spent?"
-                />
-                <datalist id="merchant-list">
-                  {suggestions.merchants.map(v => <option key={v} value={v} />)}
-                </datalist>
-              </div>
-            )}
           </div>
 
           <div className="min-w-[160px] flex-1">

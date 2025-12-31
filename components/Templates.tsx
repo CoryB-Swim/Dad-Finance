@@ -1,7 +1,8 @@
 
 import React, { useState } from 'react';
 import { RecurringTemplate, TransactionType, Category, Transaction, PaymentMethod } from '../types';
-import { Repeat, Trash2, Zap, LayoutGrid, Info, Edit2, X } from 'lucide-react';
+// Added CreditCard to the lucide-react imports
+import { Repeat, Trash2, Zap, LayoutGrid, Info, Edit2, X, PlusCircle, CreditCard } from 'lucide-react';
 import TransactionForm from './TransactionForm';
 
 interface TemplatesProps {
@@ -9,13 +10,15 @@ interface TemplatesProps {
   onPost: (t: RecurringTemplate) => void;
   onDelete: (id: number) => void;
   onUpdate: (t: RecurringTemplate) => void;
+  onAdd: (t: RecurringTemplate) => void;
   transactions: Transaction[];
   categories: Category[];
   paymentMethods: PaymentMethod[];
 }
 
-const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUpdate, transactions, categories, paymentMethods }) => {
+const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUpdate, onAdd, transactions, categories, paymentMethods }) => {
   const [editingTemplate, setEditingTemplate] = useState<RecurringTemplate | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
 
   const handleEditClick = (tmp: RecurringTemplate) => {
     setEditingTemplate(tmp);
@@ -30,6 +33,7 @@ const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUp
       category: t.category,
       subCategory: t.subCategory,
       merchant: t.merchant,
+      paymentMethod: t.paymentMethod,
       description: t.description,
       type: t.type
     };
@@ -37,46 +41,76 @@ const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUp
     setEditingTemplate(null);
   };
 
+  const handleCreateTemplate = (t: Transaction) => {
+    const newTemplate: RecurringTemplate = {
+      name: t.merchant || t.category,
+      amount: t.amount,
+      category: t.category,
+      subCategory: t.subCategory,
+      merchant: t.merchant,
+      paymentMethod: t.paymentMethod,
+      description: t.description,
+      type: t.type
+    };
+    onAdd(newTemplate);
+    setIsCreating(false);
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      {/* Edit Modal */}
-      {editingTemplate && (
+      {/* Edit/Create Modal */}
+      {(editingTemplate || isCreating) && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl border border-gray-100 overflow-hidden">
             <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-amber-100 text-amber-600 rounded-lg"><Edit2 size={18} /></div>
-                <h3 className="font-black text-gray-800 uppercase tracking-tight text-sm">Edit Template</h3>
+                <div className={`p-2 rounded-lg ${isCreating ? 'bg-blue-100 text-blue-600' : 'bg-amber-100 text-amber-600'}`}>
+                  {isCreating ? <PlusCircle size={18} /> : <Edit2 size={18} />}
+                </div>
+                <h3 className="font-black text-gray-800 uppercase tracking-tight text-sm">
+                  {isCreating ? 'Create Template' : 'Edit Template'}
+                </h3>
               </div>
-              <button onClick={() => setEditingTemplate(null)} className="p-2 hover:bg-gray-200 rounded-full text-gray-400"><X size={20} /></button>
+              <button 
+                onClick={() => { setEditingTemplate(null); setIsCreating(false); }} 
+                className="p-2 hover:bg-gray-200 rounded-full text-gray-400"
+              >
+                <X size={20} />
+              </button>
             </div>
             <div className="p-6">
-              {/* Note: Passing a fake date because TransactionForm expects it */}
               <TransactionForm 
                 categories={categories} 
                 paymentMethods={paymentMethods}
                 transactions={transactions} 
-                onAddTransaction={() => {}} 
-                onUpdateTransaction={handleUpdateTemplate}
+                onAddTransaction={isCreating ? handleCreateTemplate : () => {}} 
+                onUpdateTransaction={!isCreating ? handleUpdateTemplate : undefined}
                 onAddCategory={() => {}} 
-                editingTransaction={{
+                editingTransaction={editingTemplate ? {
                   ...editingTemplate,
                   date: new Date().toISOString().split('T')[0] // Dummy date
-                }} 
-                onCancelEdit={() => setEditingTemplate(null)} 
+                } : null} 
+                onCancelEdit={() => { setEditingTemplate(null); setIsCreating(false); }} 
               />
             </div>
           </div>
         </div>
       )}
 
-      <div className="bg-indigo-600 p-8 rounded-2xl text-white shadow-xl relative overflow-hidden">
+      <div className="bg-indigo-600 p-8 rounded-2xl text-white shadow-xl relative overflow-hidden flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
         <div className="relative z-10 max-w-xl">
           <h2 className="text-2xl font-black uppercase tracking-tight mb-2">Recurring Templates</h2>
           <p className="text-indigo-100 text-sm leading-relaxed">
             Quickly add monthly bills, subscriptions, or fixed income. Click "Post" to record a new transaction with today's date using these saved details.
           </p>
         </div>
+        <button 
+          onClick={() => setIsCreating(true)}
+          className="relative z-10 flex items-center gap-2 px-6 py-3 bg-white text-indigo-600 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-50 active:scale-95 transition-all shadow-lg"
+        >
+          <PlusCircle size={16} />
+          New Template
+        </button>
         <Repeat size={120} className="absolute -right-8 -bottom-8 text-indigo-500 opacity-20 rotate-12" />
       </div>
 
@@ -84,7 +118,7 @@ const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUp
         <div className="flex flex-col items-center justify-center py-20 bg-white rounded-2xl border-2 border-dashed border-gray-100">
           <Info size={40} className="text-gray-200 mb-4" />
           <p className="text-gray-400 font-medium">No templates saved yet.</p>
-          <p className="text-xs text-gray-400">Save a transaction as a template from the list view to see it here.</p>
+          <p className="text-xs text-gray-400">Save a transaction as a template from the list view or click "New Template" to start.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -121,6 +155,7 @@ const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUp
                   ${tmp.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 </p>
                 {tmp.description && <p className="text-xs text-gray-400 mt-1 italic">"{tmp.description}"</p>}
+                {tmp.paymentMethod && <p className="text-[10px] text-gray-400 font-bold uppercase mt-2 border-t pt-2 flex items-center gap-1"><CreditCard size={10}/> {tmp.paymentMethod}</p>}
               </div>
 
               <button 
