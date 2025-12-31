@@ -30,6 +30,7 @@ import {
   Phone,
   MessageSquare,
   Layers,
+  Filter,
   PieChart as PieIcon
 } from 'lucide-react';
 import TransactionForm from './TransactionForm';
@@ -111,6 +112,13 @@ const TransactionList: React.FC<TransactionListProps> = ({
       onClearInitialFilter?.();
     }
   }, [initialFilter, activeFilters, onClearInitialFilter]);
+
+  const addFilter = (val: string) => {
+    const clean = val.trim();
+    if (clean && !activeFilters.includes(clean)) setActiveFilters([...activeFilters, clean]);
+    setInputValue('');
+    setShowSuggestions(false);
+  };
 
   const categoryStats = useMemo(() => {
     if (!selectedCategoryForDetail) return null;
@@ -297,12 +305,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
   }, [filteredTransactions]);
 
   const toggleSort = (key: SortKey) => setSortConfig(p => ({ key, direction: p.key === key && p.direction === 'asc' ? 'desc' : 'asc' }));
-  const addFilter = (val: string) => {
-    const clean = val.trim();
-    if (clean && !activeFilters.includes(clean)) setActiveFilters([...activeFilters, clean]);
-    setInputValue('');
-    setShowSuggestions(false);
-  };
 
   const SummaryCard = ({ label, value, icon: Icon, colorClass, subValue }: any) => {
     const isCount = label.toLowerCase().includes('count') || label.toLowerCase() === 'transactions';
@@ -407,17 +409,25 @@ const TransactionList: React.FC<TransactionListProps> = ({
                 </div>
               )}
 
-              <div className="pt-4 border-t border-gray-100 flex flex-col items-center">
-                <div className="text-center mb-4">
+              <div className="pt-4 border-t border-gray-100 space-y-3">
+                <div className="text-center mb-1">
                   <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Cumulative Group Spend</p>
                   <p className="text-3xl font-black text-gray-900">${categoryStats.totalSpent.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
                 </div>
-                <button 
-                  onClick={() => setSelectedCategoryForDetail(null)}
-                  className="w-full py-3 bg-gray-900 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-gray-100 hover:bg-black transition-all active:scale-[0.98]"
-                >
-                  Close Information Card
-                </button>
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => { addFilter(categoryStats.name); setSelectedCategoryForDetail(null); }}
+                    className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-blue-50 hover:bg-blue-700 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                  >
+                    <Filter size={14} /> Filter Ledger
+                  </button>
+                  <button 
+                    onClick={() => setSelectedCategoryForDetail(null)}
+                    className="flex-1 py-3 bg-gray-900 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-gray-100 hover:bg-black transition-all active:scale-[0.98]"
+                  >
+                    Close Card
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -479,17 +489,25 @@ const TransactionList: React.FC<TransactionListProps> = ({
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-gray-100 flex flex-col items-center">
-                <div className="text-center mb-4">
+              <div className="pt-4 border-t border-gray-100 space-y-3">
+                <div className="text-center mb-1">
                   <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Cumulative Subset Spend</p>
                   <p className="text-3xl font-black text-gray-900">${subCategoryStats.totalSpent.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
                 </div>
-                <button 
-                  onClick={() => setSelectedSubCategoryForDetail(null)}
-                  className="w-full py-3 bg-gray-900 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-gray-100 hover:bg-black transition-all active:scale-[0.98]"
-                >
-                  Close Information Card
-                </button>
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => { addFilter(subCategoryStats.name); setSelectedSubCategoryForDetail(null); }}
+                    className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-blue-50 hover:bg-blue-700 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                  >
+                    <Filter size={14} /> Filter Ledger
+                  </button>
+                  <button 
+                    onClick={() => setSelectedSubCategoryForDetail(null)}
+                    className="flex-1 py-3 bg-gray-900 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-gray-100 hover:bg-black transition-all active:scale-[0.98]"
+                  >
+                    Close Card
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -564,17 +582,25 @@ const TransactionList: React.FC<TransactionListProps> = ({
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-gray-100 flex flex-col items-center">
-                <div className="text-center mb-4">
+              <div className="pt-4 border-t border-gray-100 space-y-3">
+                <div className="text-center mb-1">
                   <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Cumulative Expenditure</p>
                   <p className="text-3xl font-black text-gray-900">${merchantStats.totalSpentAtMerchant.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
                 </div>
-                <button 
-                  onClick={() => setSelectedMerchantForDetail(null)}
-                  className="w-full py-3 bg-gray-900 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-gray-100 hover:bg-black transition-all active:scale-[0.98]"
-                >
-                  Close Information Card
-                </button>
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => { addFilter(merchantStats.name); setSelectedMerchantForDetail(null); }}
+                    className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-blue-50 hover:bg-blue-700 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                  >
+                    <Filter size={14} /> Filter Ledger
+                  </button>
+                  <button 
+                    onClick={() => setSelectedMerchantForDetail(null)}
+                    className="flex-1 py-3 bg-gray-900 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-gray-100 hover:bg-black transition-all active:scale-[0.98]"
+                  >
+                    Close Card
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -677,9 +703,9 @@ const TransactionList: React.FC<TransactionListProps> = ({
               <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Temporal Range</span>
             </div>
             <div className="flex items-center gap-2">
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="px-3 py-1 bg-gray-50 border border-gray-100 rounded-lg text-[10px] font-bold outline-none focus:bg-white transition-all h-8" />
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="px-3 py-1 bg-gray-50 border border-gray-100 rounded-lg text-xs font-bold h-8 outline-none focus:bg-white transition-all" />
               <span className="text-gray-300 font-bold text-[10px]">to</span>
-              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="px-3 py-1 bg-gray-50 border border-gray-100 rounded-lg text-[10px] font-bold outline-none focus:bg-white transition-all h-8" />
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="px-3 py-1 bg-gray-50 border border-gray-100 rounded-lg text-xs font-bold h-8 outline-none focus:bg-white transition-all" />
             </div>
             <div className="flex gap-1 ml-auto">
               <button onClick={setThisYear} className="px-2 py-1 bg-white border border-gray-200 text-gray-500 rounded-lg text-[9px] font-black uppercase hover:border-blue-300 hover:text-blue-600 transition-all shadow-sm">This Year</button>

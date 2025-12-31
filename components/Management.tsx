@@ -197,6 +197,10 @@ const Management: React.FC<ManagementProps> = ({
   const [merchantSortKey, setMerchantSortKey] = useState<'name' | 'spend' | 'visits' | 'recent'>('name');
   const [merchantSortOrder, setMerchantSortOrder] = useState<'asc' | 'desc'>('asc');
 
+  const [paymentSearch, setPaymentSearch] = useState('');
+  const [paymentSortKey, setPaymentSortKey] = useState<'name' | 'spend' | 'visits'>('name');
+  const [paymentSortOrder, setPaymentSortOrder] = useState<'asc' | 'desc'>('asc');
+
   // STATS CALCULATIONS
   const categoryStatsMap = useMemo(() => {
     const stats: Record<string, number> = {};
@@ -300,6 +304,23 @@ const Management: React.FC<ManagementProps> = ({
       return merchantSortOrder === 'asc' ? comp : -comp;
     });
   }, [merchants, merchantSearch, merchantSortKey, merchantSortOrder, merchantStatsMap]);
+
+  const sortedPaymentMethods = useMemo(() => {
+    let filtered = paymentMethods;
+    if (paymentSearch.trim()) {
+      const query = paymentSearch.toLowerCase();
+      filtered = paymentMethods.filter(p => p.name.toLowerCase().includes(query));
+    }
+    return [...filtered].sort((a, b) => {
+      let comp = 0;
+      const statsA = paymentStatsMap[a.name.toLowerCase()] || { total: 0, count: 0 };
+      const statsB = paymentStatsMap[b.name.toLowerCase()] || { total: 0, count: 0 };
+      if (paymentSortKey === 'name') comp = a.name.localeCompare(b.name);
+      else if (paymentSortKey === 'spend') comp = statsA.total - statsB.total;
+      else if (paymentSortKey === 'visits') comp = statsA.count - statsB.count;
+      return paymentSortOrder === 'asc' ? comp : -comp;
+    });
+  }, [paymentMethods, paymentSearch, paymentSortKey, paymentSortOrder, paymentStatsMap]);
 
   // HANDLERS
   const openEdit = (type: 'category' | 'merchant' | 'payment', item: any) => {
@@ -589,9 +610,13 @@ const Management: React.FC<ManagementProps> = ({
       {/* PAYMENT METHODS VIEW */}
       {mode === 'payments' && (
         <div className="space-y-4">
-          <Header title="Payment Methods" icon={CreditCard} addLabel="New Method" onAdd={() => onAddPaymentMethod({ name: 'New Payment Method', color: '#3B82F6' })} />
+          <Header title="Payment Methods" icon={CreditCard} addLabel="New Method" onAdd={() => onAddPaymentMethod({ name: 'New Payment Method', color: '#3B82F6' })}
+            searchValue={paymentSearch} onSearchChange={setPaymentSearch} sortKey={paymentSortKey} onSortKeyChange={setPaymentSortKey as any}
+            sortOrder={paymentSortOrder} onSortOrderChange={setPaymentSortOrder}
+            sortOptions={[{ value: 'name', label: 'Name' }, { value: 'spend', label: 'Volume' }, { value: 'visits', label: 'Frequency' }]}
+          />
           <div className="flex flex-col gap-3">
-            {paymentMethods.map(p => {
+            {sortedPaymentMethods.map(p => {
               const isExp = expandedId === p.id;
               const stats = paymentStatsMap[p.name.toLowerCase()] || { total: 0, count: 0 };
               const perc = totalPaymentsSum > 0 ? (stats.total / totalPaymentsSum) * 100 : 0;

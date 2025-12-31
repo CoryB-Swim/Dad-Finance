@@ -1,8 +1,21 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { RecurringTemplate, TransactionType, Category, Transaction, PaymentMethod } from '../types';
-// Added CreditCard to the lucide-react imports
-import { Repeat, Trash2, Zap, LayoutGrid, Info, Edit2, X, PlusCircle, CreditCard } from 'lucide-react';
+import { 
+  Repeat, 
+  Trash2, 
+  Zap, 
+  LayoutGrid, 
+  Info, 
+  Edit2, 
+  X, 
+  PlusCircle, 
+  CreditCard,
+  Search,
+  ChevronDown,
+  SortAsc,
+  SortDesc
+} from 'lucide-react';
 import TransactionForm from './TransactionForm';
 
 interface TemplatesProps {
@@ -19,6 +32,11 @@ interface TemplatesProps {
 const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUpdate, onAdd, transactions, categories, paymentMethods }) => {
   const [editingTemplate, setEditingTemplate] = useState<RecurringTemplate | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  
+  // Search and Sort states
+  const [searchValue, setSearchValue] = useState('');
+  const [sortKey, setSortKey] = useState<'name' | 'amount' | 'category'>('name');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
   const handleEditClick = (tmp: RecurringTemplate) => {
     setEditingTemplate(tmp);
@@ -56,8 +74,92 @@ const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUp
     setIsCreating(false);
   };
 
+  const filteredAndSortedTemplates = useMemo(() => {
+    let result = templates;
+    
+    if (searchValue.trim()) {
+      const query = searchValue.toLowerCase();
+      result = templates.filter(t => 
+        t.name.toLowerCase().includes(query) || 
+        t.category.toLowerCase().includes(query) || 
+        (t.description || '').toLowerCase().includes(query) ||
+        (t.merchant || '').toLowerCase().includes(query)
+      );
+    }
+
+    return [...result].sort((a, b) => {
+      let comp = 0;
+      if (sortKey === 'name') comp = a.name.localeCompare(b.name);
+      else if (sortKey === 'amount') comp = a.amount - b.amount;
+      else if (sortKey === 'category') comp = a.category.localeCompare(b.category);
+      return sortOrder === 'asc' ? comp : -comp;
+    });
+  }, [templates, searchValue, sortKey, sortOrder]);
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
+      {/* Standardized Header */}
+      <div className="flex flex-col gap-6 mb-8">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-white rounded-xl shadow-sm border border-gray-100 text-indigo-600">
+              <Repeat size={20} />
+            </div>
+            <h3 className="text-xl font-black text-gray-800 uppercase tracking-tight">Recurring Templates</h3>
+          </div>
+          <button 
+            onClick={() => setIsCreating(true)}
+            className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-blue-100 hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center gap-2"
+          >
+            <PlusCircle size={16} /> New Template
+          </button>
+        </div>
+
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="relative group flex-1 max-w-md">
+            <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors">
+              <Search size={16} />
+            </div>
+            <input 
+              type="text"
+              value={searchValue}
+              onChange={(e) => setSearchValue(e.target.value)}
+              placeholder="Search templates..."
+              className="w-full pl-11 pr-10 py-3 bg-white border border-gray-100 rounded-2xl shadow-sm text-sm font-bold focus:ring-2 focus:ring-blue-100 focus:border-blue-300 outline-none transition-all placeholder-gray-300"
+            />
+            {searchValue && (
+              <button 
+                onClick={() => setSearchValue('')}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-rose-500 transition-colors"
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 md:w-48">
+              <select
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as any)}
+                className="w-full pl-4 pr-10 py-3 bg-white border border-gray-100 rounded-2xl shadow-sm text-xs font-black uppercase tracking-widest outline-none focus:ring-2 focus:ring-blue-100 appearance-none cursor-pointer"
+              >
+                <option value="name">Name</option>
+                <option value="amount">Amount</option>
+                <option value="category">Category</option>
+              </select>
+              <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            </div>
+            <button
+              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+              className="p-3 bg-white border border-gray-100 rounded-2xl shadow-sm text-gray-500 hover:text-blue-600 transition-all active:scale-95"
+            >
+              {sortOrder === 'asc' ? <SortAsc size={18} /> : <SortDesc size={18} />}
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Edit/Create Modal */}
       {(editingTemplate || isCreating) && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -97,32 +199,15 @@ const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUp
         </div>
       )}
 
-      <div className="bg-indigo-600 p-8 rounded-2xl text-white shadow-xl relative overflow-hidden flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-        <div className="relative z-10 max-w-xl">
-          <h2 className="text-2xl font-black uppercase tracking-tight mb-2">Recurring Templates</h2>
-          <p className="text-indigo-100 text-sm leading-relaxed">
-            Quickly add monthly bills, subscriptions, or fixed income. Click "Post" to record a new transaction with today's date using these saved details.
-          </p>
-        </div>
-        <button 
-          onClick={() => setIsCreating(true)}
-          className="relative z-10 flex items-center gap-2 px-6 py-3 bg-white text-indigo-600 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-50 active:scale-95 transition-all shadow-lg"
-        >
-          <PlusCircle size={16} />
-          New Template
-        </button>
-        <Repeat size={120} className="absolute -right-8 -bottom-8 text-indigo-500 opacity-20 rotate-12" />
-      </div>
-
-      {templates.length === 0 ? (
+      {filteredAndSortedTemplates.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 bg-white rounded-2xl border-2 border-dashed border-gray-100">
           <Info size={40} className="text-gray-200 mb-4" />
-          <p className="text-gray-400 font-medium">No templates saved yet.</p>
-          <p className="text-xs text-gray-400">Save a transaction as a template from the list view or click "New Template" to start.</p>
+          <p className="text-gray-400 font-medium">No templates found.</p>
+          <p className="text-xs text-gray-400">Try adjusting your search or click "New Template" to start.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {templates.map(tmp => (
+          {filteredAndSortedTemplates.map(tmp => (
             <div key={tmp.id} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-lg transition-all group">
               <div className="flex justify-between items-start mb-4">
                 <div className="flex items-center gap-3">
@@ -130,7 +215,7 @@ const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUp
                     <LayoutGrid size={20} />
                   </div>
                   <div>
-                    <h3 className="font-bold text-gray-900">{tmp.merchant || tmp.category}</h3>
+                    <h3 className="font-bold text-gray-900">{tmp.name}</h3>
                     <span className="text-[10px] font-black uppercase text-gray-400 tracking-wider">{tmp.category}</span>
                   </div>
                 </div>
@@ -154,7 +239,7 @@ const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUp
                 <p className={`text-2xl font-black ${tmp.type === TransactionType.INCOME ? 'text-emerald-600' : 'text-gray-900'}`}>
                   ${tmp.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 </p>
-                {tmp.description && <p className="text-xs text-gray-400 mt-1 italic">"{tmp.description}"</p>}
+                {tmp.description && <p className="text-xs text-gray-400 mt-1 italic line-clamp-1">"{tmp.description}"</p>}
                 {tmp.paymentMethod && <p className="text-[10px] text-gray-400 font-bold uppercase mt-2 border-t pt-2 flex items-center gap-1"><CreditCard size={10}/> {tmp.paymentMethod}</p>}
               </div>
 

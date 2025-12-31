@@ -54,6 +54,6 @@ export interface PaymentMethod {
   icon?: string;
 }
 
-export type View = 'dashboard' | 'list' | 'reports' | 'categories' | 'merchants' | 'payments' | 'backups' | 'templates';
+export type View = 'dashboard' | 'list' | 'categories' | 'merchants' | 'payments' | 'backups' | 'templates';
 
 export const INITIAL_CATEGORIES: { name: string; type: TransactionType; subCategories?: string[] }[] = [];

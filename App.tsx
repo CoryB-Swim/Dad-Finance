@@ -4,7 +4,6 @@ import * as XLSX from 'xlsx';
 import { 
   LayoutDashboard, 
   ListOrdered, 
-  PieChart, 
   RefreshCcw,
   CheckCircle2,
   Tags,
@@ -50,7 +49,6 @@ import {
 import { Transaction, Category, Merchant, RecurringTemplate, PaymentMethod, View, TransactionType } from './types';
 import Dashboard from './components/Dashboard';
 import TransactionList from './components/TransactionList';
-import Reports from './components/Reports';
 import Management from './components/Management';
 import Templates from './components/Templates';
 
@@ -480,7 +478,6 @@ const App: React.FC = () => {
           <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
           <NavItem view="list" icon={ListOrdered} label="Transactions" />
           <NavItem view="templates" icon={Repeat} label="Recurring" />
-          <NavItem view="reports" icon={PieChart} label="Analytics" />
           <NavItem view="categories" icon={Tags} label="Categories" />
           <NavItem view="merchants" icon={Store} label="Merchants" />
           <NavItem view="payments" icon={CreditCard} label="Payment Methods" />
@@ -514,7 +511,7 @@ const App: React.FC = () => {
           </div>
         )}
         <div className="max-w-7xl mx-auto">
-          {activeView === 'dashboard' && <Dashboard transactions={transactions} />}
+          {activeView === 'dashboard' && <Dashboard transactions={transactions} categories={categories} />}
           {activeView === 'list' && (
             <TransactionList 
               transactions={transactions} 
@@ -537,7 +534,6 @@ const App: React.FC = () => {
             />
           )}
           {activeView === 'templates' && <Templates templates={templates} onPost={handlePostTemplate} onDelete={handleDeleteTemplate} onUpdate={handleUpdateTemplate} onAdd={handleAddTemplate} transactions={transactions} categories={categories} paymentMethods={paymentMethods} />}
-          {activeView === 'reports' && <Reports transactions={transactions} categories={categories} />}
           {(['categories', 'merchants', 'payments', 'backups'].includes(activeView)) && (
             <Management 
               mode={activeView as any}
