@@ -729,18 +729,18 @@ const TransactionList: React.FC<TransactionListProps> = ({
         </div>
       </div>
 
-      {/* Ledger Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden overflow-x-auto">
-        <table className="w-full text-left text-[11px] table-fixed min-w-[900px] border-collapse">
-          <thead className="bg-gray-50/50 text-gray-400 font-black uppercase tracking-widest border-b border-gray-100">
+      {/* Ledger Table - Now with Pinned Header */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)]">
+        <table className="w-full text-left text-[11px] table-fixed min-w-[900px] border-separate border-spacing-0">
+          <thead className="bg-gray-50 text-gray-400 font-black uppercase tracking-widest sticky top-0 z-10">
             <tr>
-              <th className="px-4 py-2.5 cursor-pointer w-[100px]" onClick={() => toggleSort('date')}>Date</th>
-              <th className="px-4 py-2.5 cursor-pointer w-[160px]" onClick={() => toggleSort('category')}>Category</th>
-              <th className="px-4 py-2.5 cursor-pointer w-[160px]" onClick={() => toggleSort('subCategory')}>Sub-Category</th>
-              <th className="px-4 py-2.5 cursor-pointer w-[180px]" onClick={() => toggleSort('merchant')}>Payee</th>
-              <th className="px-4 py-2.5 cursor-pointer w-[150px]" onClick={() => toggleSort('paymentMethod')}>Payment Method</th>
-              <th className="px-4 py-2.5 text-right cursor-pointer w-[100px]" onClick={() => toggleSort('amount')}>Amount</th>
-              <th className="px-4 py-2.5 text-center w-[60px]"></th>
+              <th className="px-4 py-3 bg-gray-50 border-b border-gray-100 cursor-pointer w-[100px]" onClick={() => toggleSort('date')}>Date</th>
+              <th className="px-4 py-3 bg-gray-50 border-b border-gray-100 cursor-pointer w-[160px]" onClick={() => toggleSort('category')}>Category</th>
+              <th className="px-4 py-3 bg-gray-50 border-b border-gray-100 cursor-pointer w-[160px]" onClick={() => toggleSort('subCategory')}>Sub-Category</th>
+              <th className="px-4 py-3 bg-gray-50 border-b border-gray-100 cursor-pointer w-[180px]" onClick={() => toggleSort('merchant')}>Payee</th>
+              <th className="px-4 py-3 bg-gray-50 border-b border-gray-100 cursor-pointer w-[150px]" onClick={() => toggleSort('paymentMethod')}>Payment Method</th>
+              <th className="px-4 py-3 bg-gray-50 border-b border-gray-100 text-right cursor-pointer w-[100px]" onClick={() => toggleSort('amount')}>Amount</th>
+              <th className="px-4 py-3 bg-gray-50 border-b border-gray-100 text-center w-[60px]"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
