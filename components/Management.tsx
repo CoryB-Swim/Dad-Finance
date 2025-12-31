@@ -16,6 +16,7 @@ import {
   Search,
   Globe,
   MapPin,
+  Phone,
   TrendingUp,
   Hash,
   Calculator,
@@ -180,6 +181,7 @@ const Management: React.FC<ManagementProps> = ({
   const [editType, setEditType] = useState<TransactionType>(TransactionType.BOTH);
   const [editLocation, setEditLocation] = useState('');
   const [editWebsite, setEditWebsite] = useState('');
+  const [editPhone, setEditPhone] = useState('');
   
   const [deletingItem, setDeletingItem] = useState<{ type: 'category' | 'merchant' | 'payment', data: any } | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -308,6 +310,7 @@ const Management: React.FC<ManagementProps> = ({
     if (type === 'merchant') {
       setEditLocation(item.location || '');
       setEditWebsite(item.website || '');
+      setEditPhone(item.phone || '');
     }
   };
 
@@ -319,7 +322,7 @@ const Management: React.FC<ManagementProps> = ({
   const handleSave = () => {
     if (!editingItem || !editName.trim()) return;
     if (editingItem.type === 'category') onUpdateCategory({ ...editingItem.data, name: editName.trim(), color: editColor, type: editType });
-    else if (editingItem.type === 'merchant') onUpdateMerchant({ ...editingItem.data, name: editName.trim(), location: editLocation.trim(), website: editWebsite.trim() });
+    else if (editingItem.type === 'merchant') onUpdateMerchant({ ...editingItem.data, name: editName.trim(), location: editLocation.trim(), website: editWebsite.trim(), phone: editPhone.trim() });
     else if (editingItem.type === 'payment') onUpdatePaymentMethod({ ...editingItem.data, name: editName.trim(), color: editColor });
     else if (editingItem.type === 'subCategory' && editingItem.catId) onRenameSubCategory(editingItem.catId, editingItem.data, editName.trim());
     setEditingItem(null);
@@ -327,7 +330,6 @@ const Management: React.FC<ManagementProps> = ({
 
   const confirmDelete = () => {
     if (!deletingItem || !deletingItem.data.id) return;
-    // Fix: Using deletingItem instead of non-existent deletingId
     if (deletingItem.type === 'category') onDeleteCategory(deletingItem.data.id);
     else if (deletingItem.type === 'merchant') onDeleteMerchant(deletingItem.data.id);
     else if (deletingItem.type === 'payment') onDeletePaymentMethod(deletingItem.data.id);
@@ -381,6 +383,13 @@ const Management: React.FC<ManagementProps> = ({
                     <div className="relative">
                       <MapPin size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" />
                       <input placeholder="e.g. New York, NY" value={editLocation} onChange={(e) => setEditLocation(e.target.value)} className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-bold focus:ring-2 focus:ring-blue-100 outline-none transition-all" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-gray-400 uppercase mb-1.5 ml-1">Contact Phone</label>
+                    <div className="relative">
+                      <Phone size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" />
+                      <input placeholder="e.g. +1 (555) 000-0000" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-bold focus:ring-2 focus:ring-blue-100 outline-none transition-all" />
                     </div>
                   </div>
                   <div>
@@ -538,7 +547,7 @@ const Management: React.FC<ManagementProps> = ({
                   </div>
                   {isExp && (
                     <div className="px-8 py-6 bg-gray-50/50 border-t border-gray-100 animate-in slide-in-from-top-2 duration-200">
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                         <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
                            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Visit Count</p>
                            <h5 className="font-black text-gray-900 flex items-center gap-2"><Hash size={12} className="text-blue-500" /> {stats.count}</h5>
@@ -552,15 +561,22 @@ const Management: React.FC<ManagementProps> = ({
                            <h5 className="font-black text-gray-900 truncate flex items-center gap-2"><MapPin size={12} className="text-rose-500" /> {m.location || 'Unknown'}</h5>
                         </div>
                         <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-                           <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Website</p>
-                           {m.website ? (
-                             <a href={m.website} target="_blank" rel="noreferrer" className="font-black text-blue-600 hover:underline truncate flex items-center gap-2"><Globe size={12} /> Visit Site</a>
+                           <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Contact Info</p>
+                           {m.phone ? (
+                             <h5 className="font-black text-gray-900 truncate flex items-center gap-2"><Phone size={12} className="text-emerald-500" /> {m.phone}</h5>
                            ) : <h5 className="font-bold text-gray-300">N/A</h5>}
                         </div>
                       </div>
-                      <button onClick={() => onViewMerchantTransactions?.(m.name)} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-100 flex items-center gap-2 hover:bg-indigo-700 active:scale-95 transition-all">
-                        <ListOrdered size={14} /> View Merchant Transactions
-                      </button>
+                      <div className="flex flex-wrap gap-3">
+                        <button onClick={() => onViewMerchantTransactions?.(m.name)} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-100 flex items-center gap-2 hover:bg-indigo-700 active:scale-95 transition-all">
+                          <ListOrdered size={14} /> View History
+                        </button>
+                        {m.website && (
+                          <a href={m.website} target="_blank" rel="noreferrer" className="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-gray-50 active:scale-95 transition-all shadow-sm">
+                            <Globe size={14} /> Visit Website <ExternalLink size={10} />
+                          </a>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

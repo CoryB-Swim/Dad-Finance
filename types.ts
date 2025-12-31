@@ -42,6 +42,7 @@ export interface Merchant {
   name: string;
   website?: string;
   location?: string;
+  phone?: string;
   notes?: string;
   color?: string;
 }

@@ -22,8 +22,15 @@ import {
   PlusCircle, 
   MoreHorizontal,
   FileText,
-  // Added ListOrdered to resolve the missing component error
-  ListOrdered
+  ListOrdered,
+  Award,
+  ExternalLink,
+  MapPin,
+  Globe,
+  Phone,
+  MessageSquare,
+  Layers,
+  PieChart as PieIcon
 } from 'lucide-react';
 import TransactionForm from './TransactionForm';
 
@@ -73,6 +80,9 @@ const TransactionList: React.FC<TransactionListProps> = ({
   const [isAdding, setIsAdding] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [deletingTransaction, setDeletingTransaction] = useState<Transaction | null>(null);
+  const [selectedMerchantForDetail, setSelectedMerchantForDetail] = useState<string | null>(null);
+  const [selectedCategoryForDetail, setSelectedCategoryForDetail] = useState<string | null>(null);
+  const [selectedSubCategoryForDetail, setSelectedSubCategoryForDetail] = useState<{cat: string, sub: string} | null>(null);
   const [activeActionsMenu, setActiveActionsMenu] = useState<number | null>(null);
 
   const searchRef = useRef<HTMLDivElement>(null);
@@ -101,6 +111,120 @@ const TransactionList: React.FC<TransactionListProps> = ({
       onClearInitialFilter?.();
     }
   }, [initialFilter, activeFilters, onClearInitialFilter]);
+
+  const categoryStats = useMemo(() => {
+    if (!selectedCategoryForDetail) return null;
+    const catName = selectedCategoryForDetail.toLowerCase();
+    const allExpenses = transactions.filter(t => t.type === TransactionType.EXPENSE);
+    const totalGlobalExpense = allExpenses.reduce((sum, t) => sum + t.amount, 0);
+
+    const catTotals: Record<string, number> = {};
+    allExpenses.forEach(t => {
+      catTotals[t.category.toLowerCase()] = (catTotals[t.category.toLowerCase()] || 0) + t.amount;
+    });
+
+    const rankedCats = Object.entries(catTotals).sort(([, a], [, b]) => b - a).map(([name]) => name);
+    const rank = rankedCats.indexOf(catName) + 1;
+
+    const catTxs = transactions.filter(t => t.category.toLowerCase() === catName);
+    const expenseTxs = catTxs.filter(t => t.type === TransactionType.EXPENSE);
+    const totalSpent = expenseTxs.reduce((sum, t) => sum + t.amount, 0);
+    const percentage = totalGlobalExpense > 0 ? (totalSpent / totalGlobalExpense) * 100 : 0;
+    const average = expenseTxs.length > 0 ? totalSpent / expenseTxs.length : 0;
+
+    const catObj = categories.find(c => c.name.toLowerCase() === catName);
+
+    return {
+      name: selectedCategoryForDetail,
+      totalSpent,
+      percentage,
+      rank,
+      count: catTxs.length,
+      average,
+      subCategories: catObj?.subCategories || []
+    };
+  }, [selectedCategoryForDetail, transactions, categories]);
+
+  const subCategoryStats = useMemo(() => {
+    if (!selectedSubCategoryForDetail) return null;
+    const { cat: catName, sub: subName } = selectedSubCategoryForDetail;
+    const cLow = catName.toLowerCase();
+    const sLow = subName.toLowerCase();
+
+    const allExpenses = transactions.filter(t => t.type === TransactionType.EXPENSE);
+    const catExpenses = allExpenses.filter(t => t.category.toLowerCase() === cLow);
+    const totalCatExpense = catExpenses.reduce((sum, t) => sum + t.amount, 0);
+
+    const subTotals: Record<string, number> = {};
+    catExpenses.forEach(t => {
+      const subKey = (t.subCategory || 'Other').toLowerCase();
+      subTotals[subKey] = (subTotals[subKey] || 0) + t.amount;
+    });
+
+    const rankedSubs = Object.entries(subTotals).sort(([, a], [, b]) => b - a).map(([name]) => name);
+    const rank = rankedSubs.indexOf(sLow) + 1;
+
+    const subTxs = transactions.filter(t => t.category.toLowerCase() === cLow && (t.subCategory || '').toLowerCase() === sLow);
+    const expenseTxs = subTxs.filter(t => t.type === TransactionType.EXPENSE);
+    const totalSpent = expenseTxs.reduce((sum, t) => sum + t.amount, 0);
+    const shareOfCat = totalCatExpense > 0 ? (totalSpent / totalCatExpense) * 100 : 0;
+    const average = expenseTxs.length > 0 ? totalSpent / expenseTxs.length : 0;
+
+    return {
+      name: subName,
+      parent: catName,
+      totalSpent,
+      shareOfCat,
+      rank,
+      count: subTxs.length,
+      average
+    };
+  }, [selectedSubCategoryForDetail, transactions]);
+
+  const merchantStats = useMemo(() => {
+    if (!selectedMerchantForDetail) return null;
+    
+    const mName = selectedMerchantForDetail.toLowerCase();
+    
+    // Calculate global stats for rank and percentage (based on Expenses)
+    const allExpenses = transactions.filter(t => t.type === TransactionType.EXPENSE);
+    const totalGlobalExpense = allExpenses.reduce((sum, t) => sum + t.amount, 0);
+
+    const merchantTotals: Record<string, number> = {};
+    allExpenses.forEach(t => {
+      if (t.merchant) {
+        const name = t.merchant.toLowerCase();
+        merchantTotals[name] = (merchantTotals[name] || 0) + t.amount;
+      }
+    });
+
+    const rankedMerchants = Object.entries(merchantTotals)
+      .sort(([, a], [, b]) => b - a)
+      .map(([name]) => name);
+
+    const rank = rankedMerchants.indexOf(mName) + 1;
+
+    // Specific merchant stats (including income if any for count/average)
+    const merchantTxs = transactions.filter(t => t.merchant?.toLowerCase() === mName);
+    const count = merchantTxs.length;
+    const totalSpentAtMerchant = merchantTxs.filter(t => t.type === TransactionType.EXPENSE).reduce((sum, t) => sum + t.amount, 0);
+    const average = count > 0 ? totalSpentAtMerchant / Math.max(1, merchantTxs.filter(t => t.type === TransactionType.EXPENSE).length) : 0;
+    const percentage = totalGlobalExpense > 0 ? (totalSpentAtMerchant / totalGlobalExpense) * 100 : 0;
+
+    const merchantObj = merchants.find(m => m.name.toLowerCase() === mName);
+
+    return {
+      name: selectedMerchantForDetail,
+      count,
+      average,
+      totalSpentAtMerchant,
+      percentage,
+      rank,
+      location: merchantObj?.location,
+      website: merchantObj?.website,
+      phone: merchantObj?.phone
+    };
+  }, [selectedMerchantForDetail, transactions, merchants]);
 
   const setThisYear = () => {
     const year = new Date().getFullYear();
@@ -218,6 +342,245 @@ const TransactionList: React.FC<TransactionListProps> = ({
         </button>
       </div>
 
+      {/* Category Information Card Modal */}
+      {selectedCategoryForDetail && categoryStats && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="relative h-24 bg-gradient-to-br from-emerald-600 to-teal-700 p-6">
+              <button 
+                onClick={() => setSelectedCategoryForDetail(null)} 
+                className="absolute top-4 right-4 p-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white transition-colors"
+              >
+                <X size={18} />
+              </button>
+              <div className="absolute -bottom-6 left-6 w-16 h-16 bg-white rounded-2xl shadow-xl flex items-center justify-center border border-gray-100 text-emerald-600">
+                <Tag size={32} strokeWidth={2.5} />
+              </div>
+            </div>
+            <div className="pt-10 px-6 pb-6">
+              <div className="mb-6">
+                <h3 className="text-2xl font-black text-gray-900 uppercase tracking-tight leading-tight">{categoryStats.name}</h3>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Main Ledger Category</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                    <Award size={10} className="text-amber-500" /> Spend Rank
+                  </p>
+                  <h4 className="text-xl font-black text-gray-900">#{categoryStats.rank || 'N/A'}</h4>
+                  <p className="text-[8px] font-bold text-gray-300 uppercase">vs other groups</p>
+                </div>
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                    <PieIcon size={10} className="text-indigo-500" /> Share
+                  </p>
+                  <h4 className="text-xl font-black text-gray-900">{categoryStats.percentage.toFixed(1)}%</h4>
+                  <p className="text-[8px] font-bold text-gray-300 uppercase">of total expense</p>
+                </div>
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                    <Hash size={10} className="text-blue-500" /> Total Ledger
+                  </p>
+                  <h4 className="text-xl font-black text-gray-900">{categoryStats.count}</h4>
+                  <p className="text-[8px] font-bold text-gray-300 uppercase">entries found</p>
+                </div>
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                    <Calculator size={10} className="text-emerald-500" /> Group Avg
+                  </p>
+                  <h4 className="text-xl font-black text-gray-900">${categoryStats.average.toFixed(0)}</h4>
+                  <p className="text-[8px] font-bold text-gray-300 uppercase">per transaction</p>
+                </div>
+              </div>
+
+              {categoryStats.subCategories.length > 0 && (
+                <div className="mb-6">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1">
+                    <Layers size={10} /> Associated Sub-categories
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {categoryStats.subCategories.map(s => (
+                      <span key={s} className="px-2 py-1 bg-gray-100 rounded-lg text-[9px] font-bold text-gray-600 border border-gray-200">{s}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-4 border-t border-gray-100 flex flex-col items-center">
+                <div className="text-center mb-4">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Cumulative Group Spend</p>
+                  <p className="text-3xl font-black text-gray-900">${categoryStats.totalSpent.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                </div>
+                <button 
+                  onClick={() => setSelectedCategoryForDetail(null)}
+                  className="w-full py-3 bg-gray-900 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-gray-100 hover:bg-black transition-all active:scale-[0.98]"
+                >
+                  Close Information Card
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sub-Category Information Card Modal */}
+      {selectedSubCategoryForDetail && subCategoryStats && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="relative h-24 bg-gradient-to-br from-blue-500 to-indigo-600 p-6">
+              <button 
+                onClick={() => setSelectedSubCategoryForDetail(null)} 
+                className="absolute top-4 right-4 p-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white transition-colors"
+              >
+                <X size={18} />
+              </button>
+              <div className="absolute -bottom-6 left-6 w-16 h-16 bg-white rounded-2xl shadow-xl flex items-center justify-center border border-gray-100 text-blue-600">
+                <Layers size={32} strokeWidth={2.5} />
+              </div>
+            </div>
+            <div className="pt-10 px-6 pb-6">
+              <div className="mb-6">
+                <h3 className="text-2xl font-black text-gray-900 uppercase tracking-tight leading-tight">{subCategoryStats.name}</h3>
+                <div className="flex items-center gap-1.5 mt-1">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Part of</span>
+                  <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[9px] font-black uppercase tracking-tighter">{subCategoryStats.parent}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                    <Award size={10} className="text-amber-500" /> Internal Rank
+                  </p>
+                  <h4 className="text-xl font-black text-gray-900">#{subCategoryStats.rank || 'N/A'}</h4>
+                  <p className="text-[8px] font-bold text-gray-300 uppercase">in {subCategoryStats.parent}</p>
+                </div>
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                    <PieIcon size={10} className="text-indigo-500" /> Share
+                  </p>
+                  <h4 className="text-xl font-black text-gray-900">{subCategoryStats.shareOfCat.toFixed(1)}%</h4>
+                  <p className="text-[8px] font-bold text-gray-300 uppercase">of group spend</p>
+                </div>
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                    <Hash size={10} className="text-blue-500" /> Occurrences
+                  </p>
+                  <h4 className="text-xl font-black text-gray-900">{subCategoryStats.count}</h4>
+                  <p className="text-[8px] font-bold text-gray-300 uppercase">records found</p>
+                </div>
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                    <Calculator size={10} className="text-emerald-500" /> Average
+                  </p>
+                  <h4 className="text-xl font-black text-gray-900">${subCategoryStats.average.toFixed(0)}</h4>
+                  <p className="text-[8px] font-bold text-gray-300 uppercase">per entry</p>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-gray-100 flex flex-col items-center">
+                <div className="text-center mb-4">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Cumulative Subset Spend</p>
+                  <p className="text-3xl font-black text-gray-900">${subCategoryStats.totalSpent.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                </div>
+                <button 
+                  onClick={() => setSelectedSubCategoryForDetail(null)}
+                  className="w-full py-3 bg-gray-900 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-gray-100 hover:bg-black transition-all active:scale-[0.98]"
+                >
+                  Close Information Card
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Merchant Information Card Modal */}
+      {selectedMerchantForDetail && merchantStats && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="relative h-24 bg-gradient-to-br from-blue-600 to-indigo-700 p-6">
+              <button 
+                onClick={() => setSelectedMerchantForDetail(null)} 
+                className="absolute top-4 right-4 p-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white transition-colors"
+              >
+                <X size={18} />
+              </button>
+              <div className="absolute -bottom-6 left-6 w-16 h-16 bg-white rounded-2xl shadow-xl flex items-center justify-center border border-gray-100 text-blue-600">
+                <Store size={32} strokeWidth={2.5} />
+              </div>
+            </div>
+            <div className="pt-10 px-6 pb-6">
+              <div className="mb-6">
+                <h3 className="text-2xl font-black text-gray-900 uppercase tracking-tight leading-tight">{merchantStats.name}</h3>
+                <div className="flex flex-wrap gap-x-4 gap-y-2 mt-3">
+                  {merchantStats.location && (
+                    <span className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                      <MapPin size={12} className="text-rose-500" /> {merchantStats.location}
+                    </span>
+                  )}
+                  {merchantStats.phone && (
+                    <span className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                      <Phone size={12} className="text-emerald-500" /> {merchantStats.phone}
+                    </span>
+                  )}
+                  {merchantStats.website && (
+                    <a href={merchantStats.website} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-[10px] font-bold text-blue-600 uppercase tracking-wider hover:underline">
+                      <Globe size={12} /> Website <ExternalLink size={10} />
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                    <Award size={10} className="text-amber-500" /> Expense Rank
+                  </p>
+                  <h4 className="text-xl font-black text-gray-900">#{merchantStats.rank || 'N/A'}</h4>
+                  <p className="text-[8px] font-bold text-gray-300 uppercase">of all payees</p>
+                </div>
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                    <PieIcon size={10} className="text-indigo-500" /> Share
+                  </p>
+                  <h4 className="text-xl font-black text-gray-900">{merchantStats.percentage.toFixed(1)}%</h4>
+                  <p className="text-[8px] font-bold text-gray-300 uppercase">of total budget</p>
+                </div>
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                    <Hash size={10} className="text-blue-500" /> Total Visits
+                  </p>
+                  <h4 className="text-xl font-black text-gray-900">{merchantStats.count}</h4>
+                  <p className="text-[8px] font-bold text-gray-300 uppercase">records found</p>
+                </div>
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                    <Calculator size={10} className="text-emerald-500" /> Avg Ticket
+                  </p>
+                  <h4 className="text-xl font-black text-gray-900">${merchantStats.average.toFixed(2)}</h4>
+                  <p className="text-[8px] font-bold text-gray-300 uppercase">per transaction</p>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-gray-100 flex flex-col items-center">
+                <div className="text-center mb-4">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Cumulative Expenditure</p>
+                  <p className="text-3xl font-black text-gray-900">${merchantStats.totalSpentAtMerchant.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                </div>
+                <button 
+                  onClick={() => setSelectedMerchantForDetail(null)}
+                  className="w-full py-3 bg-gray-900 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-gray-100 hover:bg-black transition-all active:scale-[0.98]"
+                >
+                  Close Information Card
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Transaction Modal (Add/Edit) */}
       {(isAdding || editingTransaction) && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -250,7 +613,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
       {/* Delete Modal */}
       {deletingTransaction && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-2xl p-6 text-center border border-gray-100 shadow-2xl">
+          <div className="bg-white w-full max-sm rounded-2xl p-6 text-center border border-gray-100 shadow-2xl">
             <AlertCircle size={40} className="mx-auto text-rose-500 mb-4" />
             <h3 className="text-xl font-black uppercase mb-2">Delete Record?</h3>
             <p className="text-sm text-gray-500 mb-6">This action cannot be undone and will be permanently removed from your ledger.</p>
@@ -346,11 +709,11 @@ const TransactionList: React.FC<TransactionListProps> = ({
           <thead className="bg-gray-50/50 text-gray-400 font-black uppercase tracking-widest border-b border-gray-100">
             <tr>
               <th className="px-4 py-2.5 cursor-pointer w-[100px]" onClick={() => toggleSort('date')}>Date</th>
-              <th className="px-4 py-2.5 cursor-pointer w-[180px]" onClick={() => toggleSort('category')}>Group</th>
-              <th className="px-4 py-2.5 cursor-pointer w-[160px]" onClick={() => toggleSort('merchant')}>Payee</th>
-              <th className="px-4 py-2.5 cursor-pointer w-[140px]" onClick={() => toggleSort('paymentMethod')}>Source</th>
-              <th className="px-4 py-2.5 cursor-pointer" onClick={() => toggleSort('description')}>Notes</th>
-              <th className="px-4 py-2.5 text-right cursor-pointer w-[100px]" onClick={() => toggleSort('amount')}>Value</th>
+              <th className="px-4 py-2.5 cursor-pointer w-[160px]" onClick={() => toggleSort('category')}>Category</th>
+              <th className="px-4 py-2.5 cursor-pointer w-[160px]" onClick={() => toggleSort('subCategory')}>Sub-Category</th>
+              <th className="px-4 py-2.5 cursor-pointer w-[180px]" onClick={() => toggleSort('merchant')}>Payee</th>
+              <th className="px-4 py-2.5 cursor-pointer w-[150px]" onClick={() => toggleSort('paymentMethod')}>Payment Method</th>
+              <th className="px-4 py-2.5 text-right cursor-pointer w-[100px]" onClick={() => toggleSort('amount')}>Amount</th>
               <th className="px-4 py-2.5 text-center w-[60px]"></th>
             </tr>
           </thead>
@@ -359,21 +722,43 @@ const TransactionList: React.FC<TransactionListProps> = ({
               <tr key={t.id} className="hover:bg-blue-50/20 group relative transition-colors duration-75">
                 <td className="px-4 py-2.5 text-gray-400 font-bold whitespace-nowrap">{t.date}</td>
                 <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-1.5 truncate">
-                    <span className="font-black text-gray-800">
-                      {t.category}{t.subCategory ? `: ${t.subCategory}` : ''}
-                    </span>
-                  </div>
+                  <button 
+                    onClick={() => setSelectedCategoryForDetail(t.category)}
+                    className="font-black text-gray-800 truncate hover:text-blue-600 transition-colors text-left max-w-full"
+                  >
+                    {t.category}
+                  </button>
                 </td>
                 <td className="px-4 py-2.5">
-                  {t.merchant ? (
+                  {t.subCategory ? (
                     <button 
-                      onClick={() => onViewMerchantDetail?.(t.merchant!)}
-                      className="font-bold text-gray-700 truncate block hover:text-blue-600 transition-all text-left w-full"
+                      onClick={() => setSelectedSubCategoryForDetail({ cat: t.category, sub: t.subCategory! })}
+                      className="font-bold text-gray-500 truncate hover:text-blue-600 transition-colors text-left max-w-full"
                     >
-                      {t.merchant}
+                      {t.subCategory}
                     </button>
-                  ) : <span className="text-gray-200 italic">None</span>}
+                  ) : <span className="text-gray-200 italic">-</span>}
+                </td>
+                <td className="px-4 py-2.5">
+                  <div className="flex items-center gap-2 group/payee">
+                    {t.merchant ? (
+                      <button 
+                        onClick={() => setSelectedMerchantForDetail(t.merchant!)}
+                        className="font-bold text-gray-700 truncate block hover:text-blue-600 transition-all text-left max-w-full"
+                      >
+                        {t.merchant}
+                      </button>
+                    ) : <span className="text-gray-200 italic">None</span>}
+                    {t.description && (
+                      <div className="relative shrink-0 flex items-center group/note">
+                        <MessageSquare size={12} className="text-blue-400 opacity-60 hover:opacity-100 cursor-help" />
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-2 bg-gray-900 text-white text-[10px] rounded-xl opacity-0 group-hover/note:opacity-100 pointer-events-none transition-all duration-150 z-50 shadow-2xl font-bold min-w-[200px] max-w-[350px] whitespace-normal border border-gray-800 leading-relaxed">
+                          <div className="text-[8px] uppercase tracking-widest text-gray-400 mb-1">Transaction Note</div>
+                          {t.description}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-2.5">
                   {t.paymentMethod ? (
@@ -382,17 +767,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
                       {t.paymentMethod}
                     </div>
                   ) : <span className="text-gray-200">-</span>}
-                </td>
-                <td className="px-4 py-2.5">
-                  <div className="relative flex items-center gap-1.5 text-gray-400 font-medium truncate group/note">
-                    {t.description && <AlignLeft size={10} className="shrink-0 text-gray-300" />}
-                    <span className="truncate">{t.description || ''}</span>
-                    {t.description && (
-                      <div className="absolute left-0 bottom-full mb-1 px-2 py-1.5 bg-gray-900 text-white text-[9px] rounded-lg opacity-0 group-hover/note:opacity-100 pointer-events-none transition-all duration-100 z-50 shadow-xl font-bold min-w-[150px] max-w-[300px] whitespace-normal border border-gray-800">
-                        {t.description}
-                      </div>
-                    )}
-                  </div>
                 </td>
                 <td className={`px-4 py-2.5 text-right font-black whitespace-nowrap ${t.type === TransactionType.INCOME ? 'text-emerald-500' : 'text-rose-500'}`}>
                   {t.type === TransactionType.INCOME ? '+' : '-'}${t.amount.toFixed(2)}
