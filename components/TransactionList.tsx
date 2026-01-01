@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Transaction, TransactionType, Category, Merchant, PaymentMethod } from '../types';
 import { 
@@ -277,10 +276,21 @@ const TransactionList: React.FC<TransactionListProps> = ({
         const f = filter.toLowerCase();
         return t.category.toLowerCase().includes(f) || (t.subCategory || '').toLowerCase().includes(f) || (t.merchant || '').toLowerCase().includes(f) || (t.paymentMethod || '').toLowerCase().includes(f) || (t.description || '').toLowerCase().includes(f);
       });
+
+      // Apply live search filtering for the current input text
+      const query = inputValue.toLowerCase().trim();
+      const matchesInput = !query || (
+        t.category.toLowerCase().includes(query) || 
+        (t.subCategory || '').toLowerCase().includes(query) || 
+        (t.merchant || '').toLowerCase().includes(query) || 
+        (t.paymentMethod || '').toLowerCase().includes(query) || 
+        (t.description || '').toLowerCase().includes(query)
+      );
+
       const matchesType = typeFilter === 'ALL' || t.type === typeFilter;
       const matchesStartDate = !startDate || t.date >= startDate;
       const matchesEndDate = !endDate || t.date <= endDate;
-      return matchesPills && matchesType && matchesStartDate && matchesEndDate;
+      return matchesPills && matchesInput && matchesType && matchesStartDate && matchesEndDate;
     });
     result.sort((a, b) => {
       let valA = (a[sortConfig.key] || '').toString();
@@ -289,7 +299,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
       return sortConfig.direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
     });
     return result;
-  }, [transactions, activeFilters, typeFilter, startDate, endDate, sortConfig]);
+  }, [transactions, activeFilters, inputValue, typeFilter, startDate, endDate, sortConfig]);
 
   const summaryMetrics = useMemo(() => {
     const count = filteredTransactions.length;

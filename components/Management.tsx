@@ -423,7 +423,7 @@ const Management: React.FC<ManagementProps> = ({
                 </>
               )}
 
-              {(editingItem.type === 'payment' || editingItem.type === 'category') && (
+              {editingItem.type === 'category' && (
                 <div>
                   <label className="block text-[10px] font-black text-gray-400 uppercase mb-1.5 ml-1">Theme Color</label>
                   <div className="flex gap-4 items-center">
@@ -643,7 +643,7 @@ const Management: React.FC<ManagementProps> = ({
                   </div>
                   {isExp && (
                     <div className="px-8 py-6 bg-gray-50/50 border-t border-gray-100 animate-in slide-in-from-top-2 duration-200">
-                       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                          <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
                             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Records</p>
                             <h5 className="font-black text-gray-900 flex items-center gap-2"><Hash size={12} className="text-blue-500" /> {stats.count}</h5>
@@ -655,13 +655,6 @@ const Management: React.FC<ManagementProps> = ({
                          <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
                             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Average Tx</p>
                             <h5 className="font-black text-gray-900 flex items-center gap-2"><Calculator size={12} className="text-indigo-500" /> ${stats.count > 0 ? (stats.total / stats.count).toFixed(2) : '0.00'}</h5>
-                         </div>
-                         <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-                            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Method ID</p>
-                            <div className="flex items-center gap-2">
-                              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: p.color }}></div>
-                              <h5 className="font-mono text-[10px] font-bold text-gray-400 uppercase">{p.color}</h5>
-                            </div>
                          </div>
                        </div>
                     </div>
