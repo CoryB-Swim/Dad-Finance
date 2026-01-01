@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState } from 'react';
 import { Transaction, TransactionType, Category } from '../types';
 import { 
@@ -7,7 +6,8 @@ import {
 } from 'recharts';
 import { 
   Wallet, TrendingUp, TrendingDown, LayoutDashboard, Table as TableIcon, 
-  Store, Layers, Calendar, RotateCcw, ChevronRight, BarChart3, Sigma, Calculator
+  Store, Layers, Calendar, RotateCcw, ChevronRight, ChevronDown, BarChart3, Sigma, Calculator,
+  ArrowUpDown, SortAsc, SortDesc
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -93,19 +93,42 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
       .sort((a, b) => b.total - a.total);
   }, [filteredTransactions]);
 
-  const monthlyGridData = useMemo(() => {
-    const grid: Record<string, Record<string, number>> = {};
-    const incomeCats = new Set<string>();
-    const expenseCats = new Set<string>();
+  // Hierarchical Data for the Ledger Tab
+  const hierarchicalGrid = useMemo(() => {
+    const tree: Record<string, any> = {
+      [TransactionType.INCOME]: {},
+      [TransactionType.EXPENSE]: {}
+    };
+
     filteredTransactions.forEach(t => {
+      const type = t.type;
+      if (type !== TransactionType.INCOME && type !== TransactionType.EXPENSE) return;
+      
       const monthIdx = new Date(t.date).getMonth();
-      const cat = t.category;
-      if (!grid[cat]) grid[cat] = {};
-      grid[cat][monthIdx] = (grid[cat][monthIdx] || 0) + t.amount;
-      if (t.type === TransactionType.INCOME) incomeCats.add(cat);
-      else expenseCats.add(cat);
+      const cat = t.category || 'Uncategorized';
+      const sub = t.subCategory || 'General';
+      const merch = t.merchant || 'Direct / Other';
+
+      if (!tree[type][cat]) {
+        tree[type][cat] = { total: 0, months: {}, subCategories: {} };
+      }
+      tree[type][cat].total += t.amount;
+      tree[type][cat].months[monthIdx] = (tree[type][cat].months[monthIdx] || 0) + t.amount;
+
+      if (!tree[type][cat].subCategories[sub]) {
+        tree[type][cat].subCategories[sub] = { total: 0, months: {}, merchants: {} };
+      }
+      tree[type][cat].subCategories[sub].total += t.amount;
+      tree[type][cat].subCategories[sub].months[monthIdx] = (tree[type][cat].subCategories[sub].months[monthIdx] || 0) + t.amount;
+
+      if (!tree[type][cat].subCategories[sub].merchants[merch]) {
+        tree[type][cat].subCategories[sub].merchants[merch] = { total: 0, months: {} };
+      }
+      tree[type][cat].subCategories[sub].merchants[merch].total += t.amount;
+      tree[type][cat].subCategories[sub].merchants[merch].months[monthIdx] = (tree[type][cat].subCategories[sub].merchants[merch].months[monthIdx] || 0) + t.amount;
     });
-    return { grid, incomeCats: Array.from(incomeCats).sort(), expenseCats: Array.from(expenseCats).sort() };
+
+    return tree;
   }, [filteredTransactions]);
 
   // Date Presets
@@ -222,8 +245,8 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
         )}
 
         {activeTab === 'monthly' && (
-          <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-x-auto">
-            <SummaryTable gridData={monthlyGridData} />
+          <div className="space-y-8">
+            <SummaryTable hierarchicalGrid={hierarchicalGrid} />
           </div>
         )}
 
@@ -290,61 +313,204 @@ const MiniStat = ({ label, value, icon: Icon, color, isPerc }: any) => (
   </div>
 );
 
-const SummaryTable = ({ gridData }: { gridData: any }) => {
-  const { grid, incomeCats, expenseCats } = gridData;
-  // Fix: Explicitly cast the values from Object.values to number array before reduce to avoid unknown type errors.
-  const getRowTotal = (cat: string) => (Object.values(grid[cat] || {}) as number[]).reduce((a: number, b: number) => a + b, 0);
-  // Fix: Ensure the accumulator and the added value are treated as numbers to avoid unknown type errors in strict TypeScript.
-  const getMonthTotal = (monthIdx: number, cats: string[]) => cats.reduce((sum: number, cat: string) => sum + (Number(grid[cat]?.[monthIdx]) || 0), 0);
-  
-  let runningBalance = 0;
+const SummaryTable = ({ hierarchicalGrid }: { hierarchicalGrid: any }) => {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sortMode, setSortMode] = useState<'value' | 'name'>('value');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+
+  const toggle = (id: string) => {
+    const next = new Set(expanded);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setExpanded(next);
+  };
+
+  // Fixed getMonthTotal to ensure it returns number and handles potential unknown types from Object.values on any
+  const getMonthTotal = (monthIdx: number, type: TransactionType): number => {
+    const cats = (hierarchicalGrid[type] || {}) as Record<string, any>;
+    return (Object.values(cats) as any[]).reduce((sum: number, cat: any) => {
+      const months = cat.months || {};
+      return sum + (Number(months[monthIdx]) || 0);
+    }, 0);
+  };
+
+  const renderDrilldownRows = (data: any, type: TransactionType, level: number = 0, parentId: string = '') => {
+    return Object.entries(data)
+      .sort((a, b) => {
+        let comp = 0;
+        if (sortMode === 'name') comp = a[0].localeCompare(b[0]);
+        else comp = (a[1] as any).total - (b[1] as any).total;
+        return sortOrder === 'asc' ? comp : -comp;
+      })
+      .map(([name, node]: [string, any]) => {
+        const id = `${parentId}|${name}`;
+        const isExpanded = expanded.has(id);
+        const hasChildren = node.subCategories || node.merchants;
+        const colorClass = type === TransactionType.INCOME ? 'text-emerald-600' : 'text-rose-500';
+        
+        return (
+          <React.Fragment key={id}>
+            <tr 
+              className={`hover:bg-gray-50 transition-colors group cursor-pointer ${level > 0 ? 'bg-gray-50/20' : ''}`}
+              onClick={() => hasChildren && toggle(id)}
+            >
+              <td className="px-8 py-3 sticky left-0 bg-white group-hover:bg-gray-50 border-r border-gray-50 z-10" style={{ paddingLeft: `${level * 24 + 32}px` }}>
+                <div className="flex items-center gap-2">
+                  {hasChildren ? (
+                    isExpanded ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />
+                  ) : (
+                    <div className="w-[14px]" />
+                  )}
+                  <span className={`text-[11px] font-bold uppercase tracking-tight ${level === 0 ? 'text-gray-900 font-black' : 'text-gray-600'}`}>
+                    {name}
+                  </span>
+                </div>
+              </td>
+              {MONTH_NAMES.map((_, i) => (
+                <td key={i} className={`px-3 py-3 text-center text-[10px] font-bold ${node.months[i] ? 'text-gray-600' : 'text-gray-200'}`}>
+                  {node.months[i] ? `$${node.months[i].toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '-'}
+                </td>
+              ))}
+              <td className={`px-8 py-3 text-center font-black border-l bg-gray-50/10 text-xs ${colorClass}`}>
+                ${node.total.toLocaleString()}
+              </td>
+            </tr>
+            {isExpanded && node.subCategories && renderDrilldownRows(node.subCategories, type, level + 1, id)}
+            {isExpanded && node.merchants && renderDrilldownRows(node.merchants, type, level + 2, id)}
+          </React.Fragment>
+        );
+      });
+  };
 
   return (
-    <table className="w-full text-[11px] text-left border-collapse">
-      <thead>
-        <tr className="bg-gray-50 border-b border-gray-100">
-          <th className="px-6 py-4 font-black text-blue-600 uppercase w-40 sticky left-0 bg-gray-50 z-10">Intelligence Grid</th>
-          {MONTH_NAMES.map(m => <th key={m} className="px-3 py-4 font-black text-gray-400 text-center uppercase tracking-tighter">{m}</th>)}
-          <th className="px-6 py-4 font-black text-gray-900 text-center border-l bg-gray-50">Total</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-gray-50">
-        <tr className="bg-white font-black text-emerald-600">
-          <td className="px-6 py-4 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)]">Net Income</td>
-          {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-4 text-center">${getMonthTotal(i, incomeCats).toLocaleString(undefined, {maximumFractionDigits:0})}</td>)}
-          <td className="px-6 py-4 text-center border-l bg-gray-50">${incomeCats.reduce((s, c) => s + getRowTotal(c), 0).toLocaleString()}</td>
-        </tr>
-        <tr className="bg-white font-black text-rose-500">
-          <td className="px-6 py-4 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)]">Total Expenses</td>
-          {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-4 text-center">${getMonthTotal(i, expenseCats).toLocaleString(undefined, {maximumFractionDigits:0})}</td>)}
-          <td className="px-6 py-4 text-center border-l bg-gray-50">${expenseCats.reduce((s, c) => s + getRowTotal(c), 0).toLocaleString()}</td>
-        </tr>
-        <tr className="bg-blue-50/30 font-black text-blue-800 border-t-2 border-blue-100">
-          <td className="px-6 py-4 sticky left-0 bg-blue-50/30">Running Balance</td>
-          {MONTH_NAMES.map((_, i) => {
-            runningBalance += (getMonthTotal(i, incomeCats) - getMonthTotal(i, expenseCats));
-            return <td key={i} className="px-3 py-4 text-center">${runningBalance.toLocaleString(undefined, {maximumFractionDigits:0})}</td>
-          })}
-          <td className="px-6 py-4 text-center border-l bg-blue-50/50"></td>
-        </tr>
-        <tr className="bg-gray-50/50"><td colSpan={14} className="px-6 py-2.5 font-black text-emerald-800 uppercase tracking-widest text-[9px]">Income Categories Breakdown</td></tr>
-        {incomeCats.map(cat => (
-          <tr key={cat} className="hover:bg-gray-50">
-            <td className="px-6 py-3 text-gray-600 sticky left-0 bg-white font-bold">{cat}</td>
-            {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-3 text-center text-gray-500">${(grid[cat]?.[i] || 0).toLocaleString(undefined, {maximumFractionDigits:0})}</td>)}
-            <td className="px-6 py-3 text-center font-black text-emerald-600 border-l bg-gray-50/50">${getRowTotal(cat).toLocaleString()}</td>
-          </tr>
-        ))}
-        <tr className="bg-gray-50/50"><td colSpan={14} className="px-6 py-2.5 font-black text-rose-800 uppercase tracking-widest text-[9px]">Expense Categories Breakdown</td></tr>
-        {expenseCats.map(cat => (
-          <tr key={cat} className="hover:bg-gray-50">
-            <td className="px-6 py-3 text-gray-600 sticky left-0 bg-white font-bold">{cat}</td>
-            {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-3 text-center text-gray-500">${(grid[cat]?.[i] || 0).toLocaleString(undefined, {maximumFractionDigits:0})}</td>)}
-            <td className="px-6 py-3 text-center font-black text-rose-600 border-l bg-gray-50/50">${getRowTotal(cat).toLocaleString()}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div className="space-y-10">
+      {/* 1. Cash Flow Summary Overview */}
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="px-8 py-5 border-b border-gray-50 flex items-center justify-between bg-gray-50/50">
+          <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest">Cash Flow Analysis</h3>
+          <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest px-3 py-1 bg-white rounded-full border border-gray-100 shadow-sm">Aggregated Overview</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[11px] text-left border-collapse">
+            <thead>
+              <tr className="bg-gray-50/50 border-b border-gray-100">
+                <th className="px-8 py-4 font-black text-blue-600 uppercase w-48 sticky left-0 bg-white z-10">Metric</th>
+                {MONTH_NAMES.map(m => <th key={m} className="px-3 py-4 font-black text-gray-400 text-center uppercase tracking-tighter">{m}</th>)}
+                <th className="px-8 py-4 font-black text-gray-900 text-center border-l bg-gray-50/50">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              <tr className="bg-white font-black text-emerald-600">
+                <td className="px-8 py-5 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)]">Net Income (+)</td>
+                {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-5 text-center">${getMonthTotal(i, TransactionType.INCOME).toLocaleString(undefined, {maximumFractionDigits:0})}</td>)}
+                {/* Fixed explicitly typing reduce to avoid unknown type errors */}
+                <td className="px-8 py-5 text-center border-l bg-gray-50/30">${((Object.values(hierarchicalGrid[TransactionType.INCOME] || {}) as any[]).reduce((s: number, c: any) => s + (Number(c.total) || 0), 0)).toLocaleString()}</td>
+              </tr>
+              <tr className="bg-white font-black text-rose-500">
+                <td className="px-8 py-5 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)]">Total Expenses (-)</td>
+                {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-5 text-center">${getMonthTotal(i, TransactionType.EXPENSE).toLocaleString(undefined, {maximumFractionDigits:0})}</td>)}
+                {/* Fixed explicitly typing reduce to avoid unknown type errors */}
+                <td className="px-8 py-5 text-center border-l bg-gray-50/30">${((Object.values(hierarchicalGrid[TransactionType.EXPENSE] || {}) as any[]).reduce((s: number, c: any) => s + (Number(c.total) || 0), 0)).toLocaleString()}</td>
+              </tr>
+              <tr className="bg-blue-50/40 font-black text-blue-800 border-t border-blue-100/50">
+                <td className="px-8 py-5 sticky left-0 bg-blue-50/40 backdrop-blur-sm">Monthly Net Surplus</td>
+                {MONTH_NAMES.map((_, i) => {
+                  const net = getMonthTotal(i, TransactionType.INCOME) - getMonthTotal(i, TransactionType.EXPENSE);
+                  return <td key={i} className={`px-3 py-5 text-center ${net < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>${net.toLocaleString(undefined, {maximumFractionDigits:0})}</td>
+                })}
+                <td className="px-8 py-5 text-center border-l bg-blue-50/20"></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* 2. Detailed Drill-down Table for Income */}
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="px-8 py-5 border-b border-gray-50 flex items-center justify-between bg-emerald-50/30">
+          <h3 className="text-sm font-black text-emerald-800 uppercase tracking-widest">Inbound Cash Drilldown</h3>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <select
+                value={sortMode}
+                onChange={(e) => setSortMode(e.target.value as any)}
+                className="pl-4 pr-10 py-2 bg-white border border-gray-100 rounded-2xl shadow-sm text-[10px] font-black uppercase tracking-widest outline-none focus:ring-2 focus:ring-emerald-100 appearance-none cursor-pointer"
+              >
+                <option value="value">Value</option>
+                <option value="name">Name</option>
+              </select>
+              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400 pointer-events-none" />
+            </div>
+            <button
+              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+              className="p-2 bg-white border border-gray-100 rounded-xl shadow-sm text-emerald-500 hover:text-emerald-600 transition-all active:scale-95"
+            >
+              {sortOrder === 'asc' ? <SortAsc size={16} /> : <SortDesc size={16} />}
+            </button>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100">
+                <th className="px-8 py-4 font-black text-[10px] text-gray-400 uppercase w-64 sticky left-0 bg-white z-10"></th>
+                {MONTH_NAMES.map(m => <th key={m} className="px-3 py-4 font-black text-[10px] text-gray-400 text-center uppercase">{m}</th>)}
+                <th className="px-8 py-4 font-black text-[10px] text-emerald-700 text-center border-l bg-gray-50/50">Year Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {renderDrilldownRows(hierarchicalGrid[TransactionType.INCOME] || {}, TransactionType.INCOME)}
+              {Object.keys(hierarchicalGrid[TransactionType.INCOME] || {}).length === 0 && (
+                <tr><td colSpan={14} className="px-8 py-10 text-center text-gray-300 italic font-bold">No income recorded for this period</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* 3. Detailed Drill-down Table for Expenses */}
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="px-8 py-5 border-b border-gray-50 flex items-center justify-between bg-rose-50/30">
+          <h3 className="text-sm font-black text-rose-800 uppercase tracking-widest">Outbound Cash Drilldown</h3>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <select
+                value={sortMode}
+                onChange={(e) => setSortMode(e.target.value as any)}
+                className="pl-4 pr-10 py-2 bg-white border border-gray-100 rounded-2xl shadow-sm text-[10px] font-black uppercase tracking-widest outline-none focus:ring-2 focus:ring-rose-100 appearance-none cursor-pointer"
+              >
+                <option value="value">Value</option>
+                <option value="name">Name</option>
+              </select>
+              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-rose-400 pointer-events-none" />
+            </div>
+            <button
+              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+              className="p-2 bg-white border border-gray-100 rounded-xl shadow-sm text-rose-500 hover:text-rose-600 transition-all active:scale-95"
+            >
+              {sortOrder === 'asc' ? <SortAsc size={16} /> : <SortDesc size={16} />}
+            </button>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100">
+                <th className="px-8 py-4 font-black text-[10px] text-gray-400 uppercase w-64 sticky left-0 bg-white z-10"></th>
+                {MONTH_NAMES.map(m => <th key={m} className="px-3 py-4 font-black text-[10px] text-gray-400 text-center uppercase">{m}</th>)}
+                <th className="px-8 py-4 font-black text-[10px] text-rose-700 text-center border-l bg-gray-50/50">Year Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {renderDrilldownRows(hierarchicalGrid[TransactionType.EXPENSE] || {}, TransactionType.EXPENSE)}
+              {Object.keys(hierarchicalGrid[TransactionType.EXPENSE] || {}).length === 0 && (
+                <tr><td colSpan={14} className="px-8 py-10 text-center text-gray-300 italic font-bold">No expenses recorded for this period</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   );
 };
 
