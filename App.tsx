@@ -13,7 +13,9 @@ import {
   Repeat,
   Upload,
   Download,
-  CreditCard
+  CreditCard,
+  CloudCheck,
+  CloudAlert
 } from 'lucide-react';
 import { 
   initDB, 
@@ -52,6 +54,13 @@ import TransactionList from './components/TransactionList';
 import Management from './components/Management';
 import Templates from './components/Templates';
 
+const LOCAL_UPDATE_KEY = 'fintrack_last_local_update';
+
+const getLocalDateString = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState<View>('dashboard');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -64,57 +73,26 @@ const App: React.FC = () => {
   const [notification, setNotification] = useState<{message: string, type: 'success' | 'info' | 'error'} | null>(null);
   
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [isDriveConnected, setIsDriveConnected] = useState(false);
   
-  // State for cross-view navigation filters
   const [initialListFilter, setInitialListFilter] = useState<string | null>(null);
   const [targetMerchantName, setTargetMerchantName] = useState<string | null>(null);
 
   const legacyFileInputRef = useRef<HTMLInputElement>(null);
+  const syncTimeoutRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    const setup = async () => {
-      try {
-        const database = await initDB();
-        setDb(database);
-        
-        const [txs, cats, vends, tmps, pmeths] = await Promise.all([
-          getAllTransactions(database),
-          getAllCategories(database),
-          getAllMerchants(database),
-          getAllTemplates(database),
-          getAllPaymentMethods(database)
-        ]);
-        setTransactions(txs);
-        setCategories(cats);
-        setMerchants(vends);
-        setTemplates(tmps);
-        setPaymentMethods(pmeths);
-        
-        await initGoogleAuth();
-      } catch (err) {
-        console.error('Failed to init DB', err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    setup();
-  }, []);
-
-  const showNotification = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
-    setNotification({ message, type });
-    setTimeout(() => setNotification(null), 3000);
-  };
-
-  const refreshData = useCallback(async () => {
-    if (!db) return;
+  const refreshData = useCallback(async (targetDb?: IDBDatabase) => {
+    const database = targetDb || db;
+    if (!database) return;
     try {
       const [txs, cats, vends, tmps, pmeths] = await Promise.all([
-        getAllTransactions(db),
-        getAllCategories(db),
-        getAllMerchants(db),
-        getAllTemplates(db),
-        getAllPaymentMethods(db)
+        getAllTransactions(database),
+        getAllCategories(database),
+        getAllMerchants(database),
+        getAllTemplates(database),
+        getAllPaymentMethods(database)
       ]);
       setTransactions(txs);
       setCategories(cats);
@@ -126,46 +104,124 @@ const App: React.FC = () => {
     }
   }, [db]);
 
-  const handleManualSync = async () => {
+  useEffect(() => {
+    const setup = async () => {
+      try {
+        const database = await initDB();
+        setDb(database);
+        await refreshData(database);
+        await initGoogleAuth();
+        
+        if (isAuthorized()) {
+          setIsDriveConnected(true);
+          performSync(database, true); 
+        }
+      } catch (err) {
+        console.error('Failed to init app', err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    setup();
+  }, []);
+
+  const performSync = async (activeDb?: IDBDatabase, silent = false) => {
+    const database = activeDb || db;
+    if (!database) return;
+
     if (!isAuthorized()) {
-      requestAccessToken();
-      setTimeout(() => setIsDriveConnected(isAuthorized()), 2000);
+      if (!silent) showNotification('Please sign in to Drive first', 'info');
       return;
     }
-
+    
     setIsSyncing(true);
+    setSyncStatus('syncing');
     try {
       const cloudData = await getFromDrive();
-      if (cloudData) {
-        if (window.confirm('Cloud data found for this account. Would you like to merge it with your local data?')) {
-          await importAllData(db!, cloudData);
-          await refreshData();
+      const localLastUpdate = localStorage.getItem(LOCAL_UPDATE_KEY) || '0';
+      
+      let shouldPush = true;
+
+      if (cloudData && cloudData.lastUpdated) {
+        const cloudTime = new Date(cloudData.lastUpdated).getTime();
+        const localTime = new Date(localLastUpdate).getTime();
+
+        if (cloudTime > localTime || (!silent && cloudTime >= localTime)) {
+          await importAllData(database, cloudData);
+          await refreshData(database);
+          localStorage.setItem(LOCAL_UPDATE_KEY, cloudData.lastUpdated);
+          shouldPush = false; 
+          if (!silent) showNotification('Cloud data restored');
         }
       }
 
-      const [txs, cats, vends, pmeths] = await Promise.all([
-        getAllTransactions(db!),
-        getAllCategories(db!),
-        getAllMerchants(db!),
-        getAllPaymentMethods(db!)
-      ]);
+      if (shouldPush) {
+        const [txs, cats, vends, pmeths] = await Promise.all([
+          getAllTransactions(database),
+          getAllCategories(database),
+          getAllMerchants(database),
+          getAllPaymentMethods(database)
+        ]);
 
-      await syncToDrive({
-        transactions: txs,
-        categories: cats,
-        merchants: vends,
-        paymentMethods: pmeths,
-        lastUpdated: new Date().toISOString()
-      } as any);
+        const currentTimestamp = new Date().toISOString();
+        await syncToDrive({
+          transactions: txs,
+          categories: cats,
+          merchants: vends,
+          paymentMethods: pmeths,
+          lastUpdated: currentTimestamp
+        } as any);
+        
+        localStorage.setItem(LOCAL_UPDATE_KEY, currentTimestamp);
+      }
       
       setIsDriveConnected(true);
-      showNotification('Synced with Google Drive');
-    } catch (err) {
-      console.error(err);
-      showNotification('Sync failed', 'error');
+      setSyncStatus('success');
+      setLastSyncedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      if (!silent) showNotification('Drive Sync Complete');
+    } catch (err: any) {
+      console.error('Sync Error:', err);
+      setSyncStatus('error');
+      showNotification(`Sync failed: ${err.message || 'Network error'}`, 'error');
     } finally {
       setIsSyncing(false);
     }
+  };
+
+  const markLocalChange = () => {
+    localStorage.setItem(LOCAL_UPDATE_KEY, new Date().toISOString());
+    triggerAutoSync();
+  };
+
+  const triggerAutoSync = () => {
+    if (!isAuthorized()) return;
+    if (syncTimeoutRef.current) window.clearTimeout(syncTimeoutRef.current);
+    
+    setSyncStatus('syncing');
+    syncTimeoutRef.current = window.setTimeout(() => {
+      performSync(undefined, true);
+    }, 1500);
+  };
+
+  const handleManualSync = async () => {
+    if (!isAuthorized()) {
+      requestAccessToken();
+      const authPoll = setInterval(() => {
+        if (isAuthorized()) {
+          clearInterval(authPoll);
+          setIsDriveConnected(true);
+          performSync();
+        }
+      }, 500);
+      setTimeout(() => clearInterval(authPoll), 60000);
+      return;
+    }
+    await performSync();
+  };
+
+  const showNotification = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 5000);
   };
 
   const handleExportData = async () => {
@@ -199,7 +255,7 @@ const App: React.FC = () => {
     let parts = clean.split(/[-/]/);
     if (parts.length !== 3) {
       const date = new Date(dateStr);
-      return isNaN(date.getTime()) ? new Date().toISOString().split('T')[0] : date.toISOString().split('T')[0];
+      return isNaN(date.getTime()) ? getLocalDateString() : date.toISOString().split('T')[0];
     }
     let d = parts[0].padStart(2, '0');
     let m = parts[1];
@@ -269,7 +325,7 @@ const App: React.FC = () => {
 
         const item: Transaction = {
           date: parseLegacyDate(row[dateKey]),
-          merchant: merchantName || 'Unknown',
+          merchant: merchantName || 'Undefined',
           amount: Math.abs(amount),
           type: type,
           category: catName || 'Other',
@@ -299,6 +355,7 @@ const App: React.FC = () => {
 
         await refreshData();
         showNotification(`Imported ${importedCount} transactions.`);
+        markLocalChange();
       };
 
     } catch (err) {
@@ -316,17 +373,18 @@ const App: React.FC = () => {
       await importAllData(db, data);
       await refreshData();
       showNotification('Data restored');
+      markLocalChange();
     } catch (err) {
       showNotification('Restore failed', 'error');
     }
   };
 
-  // Transaction CRUD
   const handleAddTransaction = async (t: Transaction) => {
     if (!db) return;
     await addTransaction(db, t);
     await refreshData();
     showNotification('Transaction added');
+    markLocalChange();
   };
 
   const handleUpdateTransaction = async (t: Transaction) => {
@@ -334,6 +392,7 @@ const App: React.FC = () => {
     await updateTransaction(db, t);
     await refreshData();
     showNotification('Transaction updated');
+    markLocalChange();
   };
 
   const handleDeleteTransaction = async (id: number) => {
@@ -341,10 +400,10 @@ const App: React.FC = () => {
     await deleteTransaction(db, id);
     await refreshData();
     showNotification('Transaction deleted');
+    markLocalChange();
   };
 
-  // Categories / Merchants / Payments handlers
-  const handleAddCategory = (c: Category) => addCategory(db!, c).then(refreshData);
+  const handleAddCategory = (c: Category) => addCategory(db!, c).then(() => { refreshData(); markLocalChange(); });
   
   const handleUpdateCategory = async (newCat: Category) => {
     if (!db) return;
@@ -352,26 +411,25 @@ const App: React.FC = () => {
     if (!oldCat) return;
 
     await updateCategory(db, newCat);
-
-    // If name changed, update all transactions linked to this category
     if (oldCat.name !== newCat.name) {
       const txsToUpdate = transactions.filter(t => t.category === oldCat.name);
       for (const t of txsToUpdate) {
         await updateTransaction(db, { ...t, category: newCat.name });
       }
     }
-    
     await refreshData();
     showNotification('Category updated');
+    markLocalChange();
   };
 
-  const handleDeleteCategory = (id: number) => deleteCategory(db!, id).then(refreshData);
+  const handleDeleteCategory = (id: number) => deleteCategory(db!, id).then(() => { refreshData(); markLocalChange(); });
   
   const handleDeleteSubCategory = async (catId: number, subName: string) => {
     const cat = categories.find(c => c.id === catId);
     if (cat) {
       await updateCategory(db!, { ...cat, subCategories: (cat.subCategories || []).filter(s => s !== subName) });
-      refreshData();
+      await refreshData();
+      markLocalChange();
     }
   };
 
@@ -383,7 +441,6 @@ const App: React.FC = () => {
     const updatedSubs = (cat.subCategories || []).map(s => s === oldName ? newName : s);
     await updateCategory(db, { ...cat, subCategories: updatedSubs });
 
-    // Update all transactions with this sub-category
     const txsToUpdate = transactions.filter(t => t.category === cat.name && t.subCategory === oldName);
     for (const t of txsToUpdate) {
       await updateTransaction(db, { ...t, subCategory: newName });
@@ -391,9 +448,10 @@ const App: React.FC = () => {
 
     await refreshData();
     showNotification('Sub-category renamed');
+    markLocalChange();
   };
 
-  const handleAddMerchant = (v: Merchant) => addMerchant(db!, v).then(refreshData);
+  const handleAddMerchant = (v: Merchant) => addMerchant(db!, v).then(() => { refreshData(); markLocalChange(); });
   
   const handleUpdateMerchant = async (newMerchant: Merchant) => {
     if (!db) return;
@@ -401,30 +459,27 @@ const App: React.FC = () => {
     if (!oldMerchant) return;
 
     await updateMerchant(db, newMerchant);
-
-    // If name changed, update all transactions linked to this merchant
     if (oldMerchant.name !== newMerchant.name) {
       const txsToUpdate = transactions.filter(t => t.merchant === oldMerchant.name);
       for (const t of txsToUpdate) {
         await updateTransaction(db, { ...t, merchant: newMerchant.name });
       }
     }
-
     await refreshData();
     showNotification('Merchant updated');
+    markLocalChange();
   };
 
-  const handleDeleteMerchant = (id: number) => deleteMerchant(db!, id).then(refreshData);
+  const handleDeleteMerchant = (id: number) => deleteMerchant(db!, id).then(() => { refreshData(); markLocalChange(); });
+  const handleAddPaymentMethod = (p: PaymentMethod) => addPaymentMethod(db!, p).then(() => { refreshData(); markLocalChange(); });
+  const handleUpdatePaymentMethod = (p: PaymentMethod) => updatePaymentMethod(db!, p).then(() => { refreshData(); markLocalChange(); });
+  const handleDeletePaymentMethod = (id: number) => deletePaymentMethod(db!, id).then(() => { refreshData(); markLocalChange(); });
 
-  const handleAddPaymentMethod = (p: PaymentMethod) => addPaymentMethod(db!, p).then(refreshData);
-  const handleUpdatePaymentMethod = (p: PaymentMethod) => updatePaymentMethod(db!, p).then(refreshData);
-  const handleDeletePaymentMethod = (id: number) => deletePaymentMethod(db!, id).then(refreshData);
-
-  // Templates
   const handleAddTemplate = (t: RecurringTemplate) => {
     addTemplate(db!, t).then(() => {
       refreshData();
       showNotification('Template created');
+      markLocalChange();
     });
   };
 
@@ -434,7 +489,7 @@ const App: React.FC = () => {
       amount: t.amount,
       category: t.category,
       subCategory: t.subCategory,
-      merchant: t.merchant,
+      merchant: t.merchant || 'Undefined',
       paymentMethod: t.paymentMethod,
       description: t.description || '',
       type: t.type
@@ -442,16 +497,17 @@ const App: React.FC = () => {
     addTemplate(db!, tmp).then(() => {
       refreshData();
       showNotification('Saved to Recurring');
+      markLocalChange();
     });
   };
 
   const handlePostTemplate = (tmp: RecurringTemplate) => {
     const tx: Transaction = {
       amount: tmp.amount,
-      date: new Date().toISOString().split('T')[0],
+      date: getLocalDateString(),
       category: tmp.category,
       subCategory: tmp.subCategory,
-      merchant: tmp.merchant,
+      merchant: tmp.merchant || 'Undefined',
       paymentMethod: tmp.paymentMethod,
       description: tmp.description,
       type: tmp.type
@@ -459,11 +515,12 @@ const App: React.FC = () => {
     addTransaction(db!, tx).then(() => {
       refreshData();
       showNotification('Transaction posted');
+      markLocalChange();
     });
   };
 
-  const handleDeleteTemplate = (id: number) => deleteTemplate(db!, id).then(refreshData);
-  const handleUpdateTemplate = (t: RecurringTemplate) => updateTemplate(db!, t).then(refreshData);
+  const handleDeleteTemplate = (id: number) => deleteTemplate(db!, id).then(() => { refreshData(); markLocalChange(); });
+  const handleUpdateTemplate = (t: RecurringTemplate) => updateTemplate(db!, t).then(() => { refreshData(); markLocalChange(); });
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-gray-50"><RefreshCcw className="animate-spin text-blue-600" size={48} /></div>;
 
@@ -483,9 +540,26 @@ const App: React.FC = () => {
           <NavItem view="payments" icon={CreditCard} label="Payment Methods" />
         </nav>
         <div className="border-t pt-4 space-y-2">
-           <button onClick={handleManualSync} className="flex items-center gap-3 px-4 py-2 rounded-xl w-full text-left text-gray-500 hover:bg-gray-100 transition-all">
-             {isSyncing ? <RefreshCcw size={18} className="animate-spin" /> : <Cloud size={18} />}
-             <span className="hidden lg:inline text-xs font-bold">{isDriveConnected ? 'Drive Connected' : 'Sync Drive'}</span>
+           <button onClick={handleManualSync} className={`flex flex-col gap-1 px-4 py-2 rounded-xl w-full text-left transition-all ${syncStatus === 'error' ? 'bg-rose-50' : 'hover:bg-gray-100'}`}>
+             <div className="flex items-center gap-3">
+               {syncStatus === 'syncing' ? (
+                 <RefreshCcw size={18} className="animate-spin text-blue-500" />
+               ) : syncStatus === 'error' ? (
+                 <CloudAlert size={18} className="text-rose-500" />
+               ) : syncStatus === 'success' ? (
+                 <Cloud size={18} className="text-emerald-500" />
+               ) : (
+                 <Cloud size={18} className={isDriveConnected ? 'text-blue-500' : 'text-gray-400'} />
+               )}
+               <span className={`hidden lg:inline text-[10px] font-black uppercase tracking-tight ${syncStatus === 'error' ? 'text-rose-600' : 'text-gray-500'}`}>
+                 {syncStatus === 'syncing' ? 'Syncing...' : syncStatus === 'error' ? 'Sync Failed' : isDriveConnected ? 'Drive Linked' : 'Link Drive'}
+               </span>
+             </div>
+             {lastSyncedAt && !isSyncing && (
+               <span className="hidden lg:inline text-[8px] font-bold text-gray-300 ml-7 uppercase">
+                 Synced {lastSyncedAt}
+               </span>
+             )}
            </button>
            <button onClick={() => setActiveView('backups')} className="flex items-center gap-3 px-4 py-2 rounded-xl w-full text-left text-gray-500 hover:bg-gray-100 transition-all">
              <Database size={18} />
@@ -504,7 +578,7 @@ const App: React.FC = () => {
       <main className="flex-1 ml-20 lg:ml-64 p-4 lg:p-10">
         {notification && (
           <div className="fixed top-6 right-6 z-50">
-            <div className={`px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 text-white animate-in slide-in-from-right duration-300 ${notification.type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'}`}>
+            <div className={`px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 text-white animate-in slide-in-from-right duration-300 ${notification.type === 'error' ? 'bg-rose-600' : notification.type === 'info' ? 'bg-amber-600' : 'bg-emerald-600'}`}>
               <CheckCircle2 size={20} />
               <span className="font-medium text-sm font-bold uppercase">{notification.message}</span>
             </div>
@@ -524,6 +598,7 @@ const App: React.FC = () => {
               onAddCategory={handleAddCategory} 
               onUpdateCategory={handleUpdateCategory}
               onAddMerchant={handleAddMerchant}
+              onAddPaymentMethod={handleAddPaymentMethod}
               onSaveAsTemplate={handleSaveAsTemplate}
               initialFilter={initialListFilter}
               onClearInitialFilter={() => setInitialListFilter(null)}
@@ -533,7 +608,7 @@ const App: React.FC = () => {
               }}
             />
           )}
-          {activeView === 'templates' && <Templates templates={templates} onPost={handlePostTemplate} onDelete={handleDeleteTemplate} onUpdate={handleUpdateTemplate} onAdd={handleAddTemplate} transactions={transactions} categories={categories} paymentMethods={paymentMethods} />}
+          {activeView === 'templates' && <Templates templates={templates} onPost={handlePostTemplate} onDelete={handleDeleteTemplate} onUpdate={handleUpdateTemplate} onAdd={handleAddTemplate} onAddPaymentMethod={handleAddPaymentMethod} transactions={transactions} categories={categories} merchants={merchants} paymentMethods={paymentMethods} />}
           {(['categories', 'merchants', 'payments', 'backups'].includes(activeView)) && (
             <Management 
               mode={activeView as any}

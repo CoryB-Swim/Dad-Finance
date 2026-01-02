@@ -2,7 +2,7 @@
 import { Transaction, Category, Merchant, RecurringTemplate, PaymentMethod } from '../types';
 
 const DB_NAME = 'FinTrackDB';
-const DB_VERSION = 4; // Incremented version to add paymentMethods store
+const DB_VERSION = 4; 
 const STORE_TRANSACTIONS = 'transactions';
 const STORE_CATEGORIES = 'categories';
 const STORE_MERCHANTS = 'vendors'; 
@@ -37,7 +37,6 @@ export const initDB = (): Promise<IDBDatabase> => {
   });
 };
 
-// Generic CRUD helper
 const getAll = <T>(db: IDBDatabase, storeName: string): Promise<T[]> => {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, 'readonly');
@@ -77,7 +76,6 @@ const remove = (db: IDBDatabase, storeName: string, id: number): Promise<void> =
   });
 };
 
-// Export specific functions
 export const getAllTransactions = (db: IDBDatabase) => getAll<Transaction>(db, STORE_TRANSACTIONS);
 export const addTransaction = (db: IDBDatabase, t: Transaction) => add(db, STORE_TRANSACTIONS, t);
 export const updateTransaction = (db: IDBDatabase, t: Transaction) => update(db, STORE_TRANSACTIONS, t);
@@ -121,10 +119,11 @@ export const importAllData = async (db: IDBDatabase, data: any): Promise<void> =
   return new Promise((resolve, reject) => {
     const tx = db.transaction([STORE_TRANSACTIONS, STORE_CATEGORIES, STORE_MERCHANTS, STORE_PAYMENT_METHODS], 'readwrite');
     
-    if (data.transactions) data.transactions.forEach((t: any) => { delete t.id; tx.objectStore(STORE_TRANSACTIONS).add(t); });
-    if (data.categories) data.categories.forEach((c: any) => { delete c.id; tx.objectStore(STORE_CATEGORIES).add(c); });
-    if (data.merchants) data.merchants.forEach((m: any) => { delete m.id; tx.objectStore(STORE_MERCHANTS).add(m); });
-    if (data.paymentMethods) data.paymentMethods.forEach((p: any) => { delete p.id; tx.objectStore(STORE_PAYMENT_METHODS).add(p); });
+    // We use .put() instead of .add() to ensure IDs are respected during restoration
+    if (data.transactions) data.transactions.forEach((t: any) => tx.objectStore(STORE_TRANSACTIONS).put(t));
+    if (data.categories) data.categories.forEach((c: any) => tx.objectStore(STORE_CATEGORIES).put(c));
+    if (data.merchants) data.merchants.forEach((m: any) => tx.objectStore(STORE_MERCHANTS).put(m));
+    if (data.paymentMethods) data.paymentMethods.forEach((p: any) => tx.objectStore(STORE_PAYMENT_METHODS).put(p));
     
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);

@@ -1,61 +1,76 @@
 
-import { Transaction, Category, Merchant } from '../types';
+import { Transaction, Category, Merchant, PaymentMethod } from '../types';
 
 const SYNC_FILE_NAME = 'fintrack_sync.json';
-const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
 const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
 
-// Note: In a real app, CLIENT_ID would come from process.env.GOOGLE_CLIENT_ID
-const CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID_HERE'; 
+// Note: In a production environment, this should be an environment variable
+const CLIENT_ID = '442466272870-qh25ebv950817d9dmljjdb3bkve90tf9.apps.googleusercontent.com';
 
 export interface SyncData {
   transactions: Transaction[];
   categories: Category[];
   merchants: Merchant[];
+  paymentMethods: PaymentMethod[];
   lastUpdated: string;
 }
 
 let tokenClient: any = null;
 let accessToken: string | null = null;
 
+/**
+ * Initializes the Google Identity Services client.
+ */
 export const initGoogleAuth = (): Promise<void> => {
-  return new Promise((resolve) => {
-    if (typeof window === 'undefined' || !(window as any).google) return;
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') return resolve();
     
-    tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
-      client_id: CLIENT_ID,
-      scope: SCOPES,
-      callback: (tokenResponse: any) => {
-        if (tokenResponse.error !== undefined) {
-          throw tokenResponse;
-        }
-        accessToken = tokenResponse.access_token;
+    const checkGsiReady = () => {
+      if ((window as any).google?.accounts?.oauth2) {
+        tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
+          client_id: CLIENT_ID,
+          scope: SCOPES,
+          callback: (tokenResponse: any) => {
+            if (tokenResponse.error !== undefined) {
+              console.error('OAuth Error:', tokenResponse);
+              return;
+            }
+            accessToken = tokenResponse.access_token;
+          },
+        });
         resolve();
-      },
-    });
-    resolve();
+      } else {
+        setTimeout(checkGsiReady, 100);
+      }
+    };
+
+    checkGsiReady();
   });
 };
 
+/**
+ * Re-triggers the Google OAuth2 flow to obtain a fresh access token.
+ */
 export const requestAccessToken = () => {
   if (tokenClient) {
     tokenClient.requestAccessToken({ prompt: 'consent' });
   }
 };
 
-export const signOut = () => {
-  if (accessToken) {
-    (window as any).google.accounts.oauth2.revoke(accessToken, () => {
-      console.log('Access token revoked');
-    });
-    accessToken = null;
-  }
-};
-
+/**
+ * Checks if the user is currently authorized with a valid access token.
+ */
 export const isAuthorized = () => !!accessToken;
 
+/**
+ * Robust wrapper for fetch calls to Google Drive API with automatic 401 handling.
+ */
 async function fetchDrive(endpoint: string, options: RequestInit = {}) {
-  if (!accessToken) throw new Error('Not authorized');
+  if (!accessToken) {
+    requestAccessToken();
+    throw new Error('Authorization required. Please sign in to Google Drive.');
+  }
+
   const response = await fetch(`https://www.googleapis.com/drive/v3/${endpoint}`, {
     ...options,
     headers: {
@@ -63,62 +78,93 @@ async function fetchDrive(endpoint: string, options: RequestInit = {}) {
       Authorization: `Bearer ${accessToken}`,
     },
   });
+
+  if (response.status === 401) {
+    accessToken = null;
+    requestAccessToken();
+    throw new Error('Google Drive session expired. Please sign in again.');
+  }
+
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error?.message || 'Drive API Error');
+    let errorMsg = 'Drive API Error';
+    try {
+      const error = await response.json();
+      errorMsg = error.error?.message || errorMsg;
+    } catch (e) {
+      errorMsg = `HTTP Error ${response.status}`;
+    }
+    throw new Error(errorMsg);
   }
   return response;
 }
 
+/**
+ * Saves application data to the hidden appDataFolder using a robust multipart upload.
+ */
 export const syncToDrive = async (data: SyncData): Promise<void> => {
   try {
+    // 1. Locate the existing sync file
     const listResponse = await fetchDrive(`files?q=name='${SYNC_FILE_NAME}'&spaces=appDataFolder&fields=files(id)`);
     const { files } = await listResponse.json();
-    
     const fileId = files.length > 0 ? files[0].id : null;
+    
+    // 2. Construct Multipart body
+    const boundary = 'dad_finance_sync_boundary';
     const metadata = {
       name: SYNC_FILE_NAME,
-      parents: ['appDataFolder'],
+      parents: fileId ? undefined : ['appDataFolder'],
     };
 
-    const boundary = 'foo_bar_baz';
-    const delimiter = `\r\n--${boundary}\r\n`;
+    const delimiter = `--${boundary}\r\n`;
     const closeDelimiter = `\r\n--${boundary}--`;
 
-    const multipartRequestBody =
-      delimiter +
-      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-      JSON.stringify(metadata) +
-      delimiter +
-      'Content-Type: application/json\r\n\r\n' +
-      JSON.stringify(data) +
-      closeDelimiter;
+    const multipartBody = new Blob([
+      delimiter,
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n',
+      JSON.stringify(metadata),
+      '\r\n' + delimiter,
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n',
+      JSON.stringify(data),
+      closeDelimiter
+    ], { type: `multipart/related; boundary=${boundary}` });
 
-    if (fileId) {
-      await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`, {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': `multipart/related; boundary=${boundary}`,
-        },
-        body: multipartRequestBody,
-      });
-    } else {
-      await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': `multipart/related; boundary=${boundary}`,
-        },
-        body: multipartRequestBody,
-      });
+    // 3. Upload using the authenticated wrapper logic
+    const url = fileId 
+      ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
+      : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+
+    const response = await fetch(url, {
+      method: fileId ? 'PATCH' : 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: multipartBody,
+    });
+
+    if (response.status === 401) {
+      accessToken = null;
+      requestAccessToken();
+      throw new Error('Session expired during upload. Please sign in again.');
     }
-  } catch (err) {
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMsg = 'Failed to upload sync file';
+      try {
+        const error = JSON.parse(errorText);
+        errorMsg = error.error?.message || errorMsg;
+      } catch (e) {}
+      throw new Error(errorMsg);
+    }
+  } catch (err: any) {
     console.error('Failed to sync to Drive', err);
     throw err;
   }
 };
 
+/**
+ * Retrieves application data from Google Drive's hidden appDataFolder.
+ */
 export const getFromDrive = async (): Promise<SyncData | null> => {
   try {
     const listResponse = await fetchDrive(`files?q=name='${SYNC_FILE_NAME}'&spaces=appDataFolder&fields=files(id)`);
@@ -129,8 +175,9 @@ export const getFromDrive = async (): Promise<SyncData | null> => {
     const fileId = files[0].id;
     const contentResponse = await fetchDrive(`files/${fileId}?alt=media`);
     return await contentResponse.json();
-  } catch (err) {
+  } catch (err: any) {
     console.error('Failed to fetch from Drive', err);
-    return null;
+    if (err.message.includes('Authorization required')) return null;
+    throw err;
   }
 };

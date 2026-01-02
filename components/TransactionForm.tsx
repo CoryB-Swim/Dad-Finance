@@ -1,35 +1,45 @@
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Transaction, TransactionType, Category, Merchant, PaymentMethod } from '../types';
-import { Save, RotateCcw, Calendar, CreditCard, Tag, Store } from 'lucide-react';
+import { Save, RotateCcw, Calendar, CreditCard, Tag, Store, Layers, FileText, DollarSign } from 'lucide-react';
 
 interface TransactionFormProps {
   categories: Category[];
   paymentMethods: PaymentMethod[];
   transactions: Transaction[];
+  merchants: Merchant[];
   onAddTransaction: (t: Transaction) => void;
   onUpdateTransaction?: (t: Transaction) => void;
   onAddCategory: (c: Category) => void;
   onUpdateCategory?: (c: Category) => void;
   onAddMerchant?: (m: Merchant) => void;
+  onAddPaymentMethod?: (p: PaymentMethod) => void;
   editingTransaction?: Transaction | null;
   onCancelEdit?: () => void;
 }
 
+const getLocalDateString = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 const TransactionForm: React.FC<TransactionFormProps> = ({ 
   categories, 
   paymentMethods,
-  transactions, 
+  transactions,
+  merchants,
   onAddTransaction,
   onUpdateTransaction,
   onAddCategory,
   onUpdateCategory,
   onAddMerchant,
+  onAddPaymentMethod,
   editingTransaction,
   onCancelEdit
 }) => {
   const [type, setType] = useState<TransactionType>(TransactionType.EXPENSE);
   const [amount, setAmount] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(getLocalDateString());
   const [category, setCategory] = useState('');
   const [subCategory, setSubCategory] = useState('');
   const [merchant, setMerchant] = useState('');
@@ -59,36 +69,27 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
     setSubCategory('');
     setMerchant('');
     setDescription('');
+    setPaymentMethod('');
+    setDate(getLocalDateString());
   };
-
-  const filteredCategories = useMemo(() => {
-    return categories.filter(c => c.type === type || c.type === TransactionType.BOTH);
-  }, [categories, type]);
-
-  const activeCategoryObject = useMemo(() => {
-    return categories.find(c => c.name.toLowerCase() === category.toLowerCase());
-  }, [categories, category]);
 
   const suggestions = useMemo(() => {
     const merchantsSet = new Set<string>();
+    merchants.forEach(m => merchantsSet.add(m.name));
     transactions.forEach(t => { if (t.merchant) merchantsSet.add(t.merchant); });
     
-    // Also include currently registered merchants
-    const registeredMerchants = merchantsSet;
-    
     const historySubs = new Set<string>();
+    const activeCatObj = categories.find(c => c.name.toLowerCase() === category.toLowerCase());
     transactions.forEach(t => {
       if (t.category.toLowerCase() === category.toLowerCase() && t.subCategory) historySubs.add(t.subCategory);
     });
 
-    const definedSubs = activeCategoryObject?.subCategories || [];
-    const combinedSubs = Array.from(new Set([...definedSubs, ...Array.from(historySubs)])).sort();
-
     return {
-      merchants: Array.from(registeredMerchants).sort(),
-      filteredSubCategories: combinedSubs
+      merchants: Array.from(merchantsSet).sort(),
+      filteredSubCategories: Array.from(new Set([...(activeCatObj?.subCategories || []), ...Array.from(historySubs)])).sort(),
+      paymentMethods: paymentMethods.map(p => p.name).sort()
     };
-  }, [transactions, category, activeCategoryObject]);
+  }, [transactions, merchants, category, categories, paymentMethods]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,16 +98,15 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
 
     const trimmedCategory = category.trim();
     const trimmedSubCategory = subCategory.trim();
-    const trimmedMerchant = merchant.trim();
+    const trimmedMerchant = merchant.trim() || 'Undefined';
+    const trimmedPayment = paymentMethod.trim();
 
-    // 1. Auto-handle Category Creation
+    // Inline Category creation
     let currentCat = categories.find(c => c.name.toLowerCase() === trimmedCategory.toLowerCase());
     if (!currentCat) {
       const newCat: Category = { name: trimmedCategory, type: type, subCategories: trimmedSubCategory ? [trimmedSubCategory] : [] };
       onAddCategory(newCat);
-      currentCat = newCat; // Temporary ref for logic below
     } else if (trimmedSubCategory && onUpdateCategory) {
-      // 2. Auto-handle Sub-category Creation within existing Category
       const subExists = (currentCat.subCategories || []).some(s => s.toLowerCase() === trimmedSubCategory.toLowerCase());
       if (!subExists) {
         onUpdateCategory({
@@ -116,29 +116,32 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
       }
     }
 
-    // 3. Auto-handle Merchant Creation
-    if (trimmedMerchant && onAddMerchant) {
-      const merchantExists = transactions.some(t => t.merchant?.toLowerCase() === trimmedMerchant.toLowerCase());
-      // For simplicity, we check transactions; in a more robust app, we'd check the merchant store passed in via props
-      if (!merchantExists) {
-        onAddMerchant({ name: trimmedMerchant });
-      }
+    // Inline Merchant creation
+    if (trimmedMerchant && trimmedMerchant !== 'Undefined' && onAddMerchant) {
+      const merchantExists = merchants.some(m => m.name.toLowerCase() === trimmedMerchant.toLowerCase());
+      if (!merchantExists) onAddMerchant({ name: trimmedMerchant });
+    }
+
+    // Inline Payment Method creation
+    if (trimmedPayment && onAddPaymentMethod) {
+      const paymentExists = paymentMethods.some(p => p.name.toLowerCase() === trimmedPayment.toLowerCase());
+      if (!paymentExists) onAddPaymentMethod({ name: trimmedPayment });
     }
 
     const transactionData: Transaction = {
       amount: parsedAmount,
       date,
-      category: currentCat?.name || trimmedCategory,
+      category: trimmedCategory,
       subCategory: trimmedSubCategory || undefined,
-      merchant: trimmedMerchant || undefined,
-      paymentMethod,
+      merchant: trimmedMerchant,
+      paymentMethod: trimmedPayment || undefined,
       description,
       type
     };
 
-    if (editingTransaction && editingTransaction.id !== undefined) {
+    if (editingTransaction?.id !== undefined) {
       transactionData.id = editingTransaction.id;
-      if (onUpdateTransaction) onUpdateTransaction(transactionData);
+      onUpdateTransaction?.(transactionData);
     } else {
       onAddTransaction(transactionData);
     }
@@ -146,184 +149,195 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
     resetForm();
   };
 
-  const triggerPicker = () => {
-    if (dateInputRef.current && 'showPicker' in HTMLInputElement.prototype) {
-      try { dateInputRef.current.showPicker(); } catch (e) { dateInputRef.current.click(); }
-    }
-  };
-
-  const getSubmitText = () => {
-    if (editingTransaction) return editingTransaction.id !== undefined ? 'Update' : 'Copy';
-    return 'Save Transaction';
-  };
-
   return (
-    <div className="w-full">
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4 bg-gray-50/80 p-4 rounded-xl border border-gray-100 shadow-inner">
-        {/* Row 1: Core Financials */}
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex bg-white border border-gray-300 rounded-lg p-0.5 shrink-0 shadow-sm h-[38px] items-center">
-            <button
-              type="button"
-              onClick={() => { setType(TransactionType.EXPENSE); }}
-              className={`px-4 h-full rounded-md text-[10px] font-black uppercase transition-all ${
-                type === TransactionType.EXPENSE ? 'bg-rose-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-600'
-              }`}
-            >
-              Expense
-            </button>
-            <button
-              type="button"
-              onClick={() => { setType(TransactionType.INCOME); }}
-              className={`px-4 h-full rounded-md text-[10px] font-black uppercase transition-all ${
-                type === TransactionType.INCOME ? 'bg-emerald-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
-              Income
-            </button>
+    <form onSubmit={handleSubmit} className="space-y-10 animate-in fade-in duration-300">
+      {/* SECTION 1: CORE DATA */}
+      <section>
+        <div className="flex items-center gap-2 mb-4 border-b border-gray-100 pb-2">
+          <div className="p-1.5 bg-blue-50 rounded-lg text-blue-600"><DollarSign size={16} /></div>
+          <h4 className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Transaction Basics</h4>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-wider ml-1">Flow Type</label>
+            <div className="flex bg-gray-100 p-1.5 rounded-2xl h-14">
+              <button
+                type="button"
+                onClick={() => setType(TransactionType.EXPENSE)}
+                className={`flex-1 rounded-xl text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 ${
+                  type === TransactionType.EXPENSE ? 'bg-white text-rose-600 shadow-sm' : 'text-gray-400 hover:text-gray-500'
+                }`}
+              >
+                Expense
+              </button>
+              <button
+                type="button"
+                onClick={() => setType(TransactionType.INCOME)}
+                className={`flex-1 rounded-xl text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 ${
+                  type === TransactionType.INCOME ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-400 hover:text-gray-500'
+                }`}
+              >
+                Income
+              </button>
+            </div>
           </div>
 
-          <div className="w-32 shrink-0">
-            <label className="block text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 tracking-wider">Amount</label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs">$</span>
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-wider ml-1">Amount</label>
+            <div className="relative group h-14">
+              <span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
               <input
                 type="number" step="0.01" required value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                className="w-full pl-6 pr-3 py-2 border border-gray-300 rounded-lg outline-none text-xs bg-white text-gray-900 shadow-sm placeholder-gray-400 font-bold"
+                className="w-full h-full pl-10 pr-6 bg-gray-50 border border-gray-200 rounded-2xl text-lg font-black focus:ring-4 focus:ring-blue-100 focus:border-blue-300 focus:bg-white outline-none transition-all placeholder-gray-300"
                 placeholder="0.00"
               />
             </div>
           </div>
 
-          <div className="w-40 shrink-0">
-            <label className="block text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 tracking-wider">Date</label>
-            <div className="relative flex items-center group">
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-wider ml-1">Posting Date</label>
+            <div className="relative group h-14" onClick={() => dateInputRef.current?.showPicker()}>
+              <div className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400 group-hover:text-blue-500 transition-colors">
+                <Calendar size={20} />
+              </div>
               <input
                 ref={dateInputRef}
                 type="date" required value={date}
                 onChange={(e) => setDate(e.target.value)}
-                onClick={triggerPicker}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white text-gray-900 shadow-sm font-bold pr-10 outline-none cursor-pointer"
+                className="w-full h-full pl-14 pr-6 bg-gray-50 border border-gray-200 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-blue-100 focus:border-blue-300 focus:bg-white outline-none transition-all cursor-pointer"
               />
-              <div className="absolute right-3 pointer-events-none text-gray-400 group-hover:text-blue-500 transition-colors">
-                <Calendar size={14} />
-              </div>
             </div>
           </div>
+        </div>
+      </section>
 
-          <div className="min-w-[160px] flex-1">
-            <label className="block text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 tracking-wider">Category</label>
-            <div className="relative flex items-center group">
-              <input
-                type="text"
-                list="category-list"
-                required
-                value={category}
-                onChange={(e) => { setCategory(e.target.value); setSubCategory(''); }}
-                placeholder="Select or type new..."
-                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-xs bg-white shadow-sm font-bold outline-none focus:border-blue-400 transition-colors"
-              />
-              <div className="absolute left-3 pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
-                <Tag size={14} />
+      {/* SECTION 2: CLASSIFICATION */}
+      <section>
+        <div className="flex items-center gap-2 mb-4 border-b border-gray-100 pb-2">
+          <div className="p-1.5 bg-indigo-50 rounded-lg text-indigo-600"><Tag size={16} /></div>
+          <h4 className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Categorization & Payee</h4>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-wider ml-1">Main Category</label>
+            <div className="relative group h-14">
+              <div className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                <Tag size={20} />
               </div>
-              <datalist id="category-list">
-                {filteredCategories.map((c) => <option key={c.id || c.name} value={c.name} />)}
+              <input
+                type="text" list="cat-suggestions" required value={category}
+                onChange={(e) => { setCategory(e.target.value); setSubCategory(''); }}
+                className="w-full h-full pl-14 pr-6 bg-gray-50 border border-gray-200 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-blue-100 focus:border-blue-300 focus:bg-white outline-none transition-all"
+                placeholder="Required"
+              />
+              <datalist id="cat-suggestions">
+                {categories.filter(c => c.type === type || c.type === TransactionType.BOTH).map(c => <option key={c.id} value={c.name} />)}
               </datalist>
             </div>
           </div>
 
-          <div className="min-w-[160px] flex-1">
-            <label className="block text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 tracking-wider">Sub-Category</label>
-            <div className="relative flex items-center group">
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-wider ml-1">Sub-Category</label>
+            <div className="relative group h-14">
+              <div className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                <Layers size={20} />
+              </div>
               <input
-                type="text"
-                list="sub-category-list"
-                value={subCategory}
+                type="text" list="sub-suggestions" value={subCategory}
                 onChange={(e) => setSubCategory(e.target.value)}
-                placeholder="Select or type new..."
-                className="w-full pl-3 pr-3 py-2 border border-gray-300 rounded-lg text-xs bg-white shadow-sm font-bold outline-none focus:border-blue-400 disabled:bg-gray-100 disabled:cursor-not-allowed transition-colors"
+                className="w-full h-full pl-14 pr-6 bg-gray-50 border border-gray-200 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-blue-100 focus:border-blue-300 focus:bg-white outline-none transition-all disabled:opacity-50"
+                placeholder="Optional"
                 disabled={!category.trim()}
               />
-              <datalist id="sub-category-list">
+              <datalist id="sub-suggestions">
                 {suggestions.filteredSubCategories.map(s => <option key={s} value={s} />)}
               </datalist>
             </div>
           </div>
-        </div>
 
-        {/* Row 2: Details & Actions */}
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-[180px] flex-1">
-            <label className="block text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 tracking-wider">Merchant / Payee</label>
-            <div className="relative flex items-center group">
-              <input
-                type="text"
-                list="merchant-list-form"
-                value={merchant}
-                onChange={(e) => setMerchant(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-xs bg-white shadow-sm placeholder-gray-300 font-bold outline-none focus:border-blue-400 transition-colors"
-                placeholder="Where was this spent?"
-              />
-              <div className="absolute left-3 pointer-events-none text-gray-400 group-focus-within:text-blue-500 transition-colors">
-                <Store size={14} />
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-wider ml-1">Merchant / Payee</label>
+            <div className="relative group h-14">
+              <div className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                <Store size={20} />
               </div>
-              <datalist id="merchant-list-form">
-                {suggestions.merchants.map(v => <option key={v} value={v} />)}
+              <input
+                type="text" list="merch-suggestions" value={merchant}
+                onChange={(e) => setMerchant(e.target.value)}
+                className="w-full h-full pl-14 pr-6 bg-gray-50 border border-gray-200 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-blue-100 focus:border-blue-300 focus:bg-white outline-none transition-all"
+                placeholder="Undefined"
+              />
+              <datalist id="merch-suggestions">
+                {suggestions.merchants.map(m => <option key={m} value={m} />)}
+              </datalist>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* SECTION 3: OTHER INFO */}
+      <section>
+        <div className="flex items-center gap-2 mb-4 border-b border-gray-100 pb-2">
+          <div className="p-1.5 bg-amber-50 rounded-lg text-amber-600"><CreditCard size={16} /></div>
+          <h4 className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Payment & Notes</h4>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-wider ml-1">Payment Method</label>
+            <div className="relative group h-14">
+              <div className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                <CreditCard size={20} />
+              </div>
+              <input
+                type="text" list="pay-suggestions" value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value)}
+                className="w-full h-full pl-14 pr-6 bg-gray-50 border border-gray-200 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-blue-100 focus:border-blue-300 focus:bg-white outline-none transition-all"
+                placeholder="Search or add new..."
+              />
+              <datalist id="pay-suggestions">
+                {suggestions.paymentMethods.map(p => <option key={p} value={p} />)}
               </datalist>
             </div>
           </div>
 
-          <div className="min-w-[160px] flex-1">
-            <label className="block text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 tracking-wider">Payment Method</label>
-            <div className="relative flex items-center group">
-              <select
-                value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-xs bg-white shadow-sm cursor-pointer font-bold outline-none focus:border-blue-400 transition-colors appearance-none"
-              >
-                <option value="">No Payment Method</option>
-                {paymentMethods.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-              </select>
-              <div className="absolute left-3 pointer-events-none text-gray-400">
-                <CreditCard size={14} />
+          <div className="space-y-1.5 md:col-span-2">
+            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-wider ml-1">Description / Notes</label>
+            <div className="relative group h-14">
+              <div className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors">
+                <FileText size={20} />
               </div>
+              <input
+                type="text" value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full h-full pl-14 pr-6 bg-gray-50 border border-gray-200 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-blue-100 focus:border-blue-300 focus:bg-white outline-none transition-all"
+                placeholder="Optional memo..."
+              />
             </div>
           </div>
-
-          <div className="min-w-[250px] flex-[2]">
-            <label className="block text-[9px] font-black text-gray-400 uppercase mb-1 ml-1 tracking-wider">Description & Notes</label>
-            <input
-              type="text" value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white shadow-sm placeholder-gray-300 font-bold outline-none focus:border-blue-400 transition-colors"
-              placeholder="Additional details (Optional)..."
-            />
-          </div>
-
-          <div className="flex gap-2 shrink-0 pb-0.5">
-            {editingTransaction && (
-              <button 
-                type="button" 
-                onClick={onCancelEdit} 
-                className="px-4 py-2 bg-gray-200 text-gray-600 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-gray-300 transition-colors"
-              >
-                <RotateCcw size={14} />
-              </button>
-            )}
-            <button 
-              type="submit" 
-              className={`px-6 py-2 rounded-lg text-white text-[10px] font-black shadow-lg uppercase tracking-widest transition-all active:scale-95 flex items-center gap-2 ${
-                editingTransaction ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-100' : 'bg-gray-900 hover:bg-black shadow-gray-200'
-              }`}
-            >
-              <Save size={14} />
-              {getSubmitText()}
-            </button>
-          </div>
         </div>
-      </form>
-    </div>
+      </section>
+
+      {/* ACTION BAR */}
+      <div className="flex flex-col sm:flex-row items-center gap-4 pt-4">
+        <button 
+          type="submit" 
+          className="flex-1 w-full sm:w-auto h-16 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black uppercase tracking-widest text-sm shadow-xl shadow-blue-100 active:scale-[0.98] transition-all flex items-center justify-center gap-3"
+        >
+          <Save size={20} />
+          {editingTransaction ? 'Update Record' : 'Save Transaction'}
+        </button>
+        {editingTransaction && (
+          <button 
+            type="button" 
+            onClick={onCancelEdit}
+            className="w-full sm:w-auto h-16 px-10 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-2xl font-black uppercase tracking-widest text-xs transition-all flex items-center justify-center gap-2"
+          >
+            <RotateCcw size={16} /> Cancel
+          </button>
+        )}
+      </div>
+    </form>
   );
 };
 

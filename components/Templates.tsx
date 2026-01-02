@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
-import { RecurringTemplate, TransactionType, Category, Transaction, PaymentMethod } from '../types';
+import { RecurringTemplate, TransactionType, Category, Transaction, PaymentMethod, Merchant } from '../types';
 import { 
   Repeat, 
   Trash2, 
@@ -24,16 +24,28 @@ interface TemplatesProps {
   onDelete: (id: number) => void;
   onUpdate: (t: RecurringTemplate) => void;
   onAdd: (t: RecurringTemplate) => void;
+  onAddPaymentMethod: (p: PaymentMethod) => void;
   transactions: Transaction[];
   categories: Category[];
+  merchants: Merchant[];
   paymentMethods: PaymentMethod[];
 }
 
-const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUpdate, onAdd, transactions, categories, paymentMethods }) => {
+const Templates: React.FC<TemplatesProps> = ({ 
+  templates, 
+  onPost, 
+  onDelete, 
+  onUpdate, 
+  onAdd, 
+  onAddPaymentMethod,
+  transactions, 
+  categories, 
+  merchants, 
+  paymentMethods 
+}) => {
   const [editingTemplate, setEditingTemplate] = useState<RecurringTemplate | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   
-  // Search and Sort states
   const [searchValue, setSearchValue] = useState('');
   const [sortKey, setSortKey] = useState<'name' | 'amount' | 'category'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -98,7 +110,6 @@ const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUp
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      {/* Standardized Header */}
       <div className="flex flex-col gap-6 mb-8">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -160,7 +171,6 @@ const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUp
         </div>
       </div>
 
-      {/* Edit/Create Modal */}
       {(editingTemplate || isCreating) && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl border border-gray-100 overflow-hidden">
@@ -180,17 +190,19 @@ const Templates: React.FC<TemplatesProps> = ({ templates, onPost, onDelete, onUp
                 <X size={20} />
               </button>
             </div>
-            <div className="p-6">
+            <div className="p-8">
               <TransactionForm 
                 categories={categories} 
                 paymentMethods={paymentMethods}
-                transactions={transactions} 
+                transactions={transactions}
+                merchants={merchants}
                 onAddTransaction={isCreating ? handleCreateTemplate : () => {}} 
                 onUpdateTransaction={!isCreating ? handleUpdateTemplate : undefined}
                 onAddCategory={() => {}} 
+                onAddPaymentMethod={onAddPaymentMethod}
                 editingTransaction={editingTemplate ? {
                   ...editingTemplate,
-                  date: new Date().toISOString().split('T')[0] // Dummy date
+                  date: new Date().toISOString().split('T')[0]
                 } : null} 
                 onCancelEdit={() => { setEditingTemplate(null); setIsCreating(false); }} 
               />
