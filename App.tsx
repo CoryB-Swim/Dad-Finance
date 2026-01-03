@@ -23,6 +23,7 @@ import {
   addTransaction, 
   updateTransaction,
   deleteTransaction, 
+  deleteTransactions,
   getAllCategories, 
   addCategory,
   updateCategory,
@@ -46,7 +47,8 @@ import {
   requestAccessToken, 
   isAuthorized, 
   syncToDrive, 
-  getFromDrive
+  getFromDrive,
+  isDriveEnabledInStorage
 } from './services/googleDrive';
 import { Transaction, Category, Merchant, RecurringTemplate, PaymentMethod, View, TransactionType } from './types';
 import Dashboard from './components/Dashboard';
@@ -103,27 +105,6 @@ const App: React.FC = () => {
       console.error('Error refreshing data:', err);
     }
   }, [db]);
-
-  useEffect(() => {
-    const setup = async () => {
-      try {
-        const database = await initDB();
-        setDb(database);
-        await refreshData(database);
-        await initGoogleAuth();
-        
-        if (isAuthorized()) {
-          setIsDriveConnected(true);
-          performSync(database, true); 
-        }
-      } catch (err) {
-        console.error('Failed to init app', err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    setup();
-  }, []);
 
   const performSync = async (activeDb?: IDBDatabase, silent = false) => {
     const database = activeDb || db;
@@ -188,6 +169,32 @@ const App: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    const setup = async () => {
+      try {
+        const database = await initDB();
+        setDb(database);
+        await refreshData(database);
+        
+        // Pass a callback to performSync once authorized
+        await initGoogleAuth(() => {
+          setIsDriveConnected(true);
+          performSync(database, true);
+        });
+        
+        // Auto-reconnect if previously enabled
+        if (isDriveEnabledInStorage()) {
+          requestAccessToken(); 
+        }
+      } catch (err) {
+        console.error('Failed to init app', err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    setup();
+  }, []);
+
   const markLocalChange = () => {
     localStorage.setItem(LOCAL_UPDATE_KEY, new Date().toISOString());
     triggerAutoSync();
@@ -206,14 +213,7 @@ const App: React.FC = () => {
   const handleManualSync = async () => {
     if (!isAuthorized()) {
       requestAccessToken();
-      const authPoll = setInterval(() => {
-        if (isAuthorized()) {
-          clearInterval(authPoll);
-          setIsDriveConnected(true);
-          performSync();
-        }
-      }, 500);
-      setTimeout(() => clearInterval(authPoll), 60000);
+      // Logic for initial manual link is now handled by the onAuthSuccess callback passed to initGoogleAuth
       return;
     }
     await performSync();
@@ -241,93 +241,157 @@ const App: React.FC = () => {
     }
   };
 
-  const parseLegacyDate = (dateVal: any) => {
+  const parseLegacyDate = (dateVal: any): string => {
+    if (!dateVal) return getLocalDateString();
+    
+    // 1. Handle numeric Excel date codes
     if (typeof dateVal === 'number') {
-      const date = XLSX.SSF.parse_date_code(dateVal);
-      return `${date.y}-${String(date.m).padStart(2, '0')}-${String(date.d).padStart(2, '0')}`;
+      try {
+        const date = XLSX.SSF.parse_date_code(dateVal);
+        return `${date.y}-${String(date.m).padStart(2, '0')}-${String(date.d).padStart(2, '0')}`;
+      } catch (e) {
+        return getLocalDateString();
+      }
     }
-    const dateStr = String(dateVal || '');
+
+    const dateStr = String(dateVal).trim();
+    
+    // 2. Try native JS parsing (good for ISO or standard strings)
+    const nativeDate = new Date(dateStr);
+    if (!isNaN(nativeDate.getTime())) {
+      return nativeDate.toISOString().split('T')[0];
+    }
+
+    // 3. Fallback logic for common manually entered strings
     const months: Record<string, string> = {
       'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'May': '05', 'Jun': '06',
       'Jul': '07', 'Aug': '08', 'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'
     };
-    let clean = dateStr.trim().replace(/\s+/g, '-');
-    let parts = clean.split(/[-/]/);
-    if (parts.length !== 3) {
-      const date = new Date(dateStr);
-      return isNaN(date.getTime()) ? getLocalDateString() : date.toISOString().split('T')[0];
+    
+    // Split by any common separator
+    let parts = dateStr.split(/[-/\s.]+/);
+    if (parts.length === 3) {
+      // Logic for DD-MMM-YY or DD-MM-YY
+      let d = parts[0].padStart(2, '0');
+      let m = parts[1];
+      let y = parts[2];
+
+      // Handle MMM month
+      if (isNaN(parseInt(m))) {
+        const monthKey = m.charAt(0).toUpperCase() + m.slice(1).toLowerCase().substring(0, 2);
+        const found = Object.keys(months).find(k => k.startsWith(monthKey));
+        m = found ? months[found] : '01';
+      } else {
+        m = m.padStart(2, '0');
+      }
+
+      // Handle 2-digit years
+      if (y.length === 2) {
+        const currentYear = new Date().getFullYear() % 100;
+        y = (parseInt(y) <= currentYear + 5 ? '20' : '19') + y;
+      }
+      
+      // Basic validation
+      if (parseInt(m) > 12) {
+        // Swap m and d if it looks like MM/DD/YYYY
+        [d, m] = [m, d];
+      }
+
+      return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
     }
-    let d = parts[0].padStart(2, '0');
-    let m = parts[1];
-    let y = parts[2];
-    if (isNaN(parseInt(m))) {
-      const monthKey = m.charAt(0).toUpperCase() + m.slice(1).toLowerCase().substring(0, 2);
-      const found = Object.keys(months).find(k => k.startsWith(monthKey));
-      m = found ? months[found] : '01';
-    } else {
-      m = m.padStart(2, '0');
-    }
-    if (y.length === 2) y = '20' + y;
-    return `${y}-${m}-${d}`;
+
+    return getLocalDateString();
   };
 
   const handleLegacyImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !db) return;
 
+    console.log(`Starting import of ${file.name}`);
+
     try {
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: 'array' });
-      const sheetName = workbook.SheetNames.find(n => n.includes("INPUT Expense")) || workbook.SheetNames[0];
+      
+      // Sheet detection
+      const sheetName = workbook.SheetNames.find(n => n.toUpperCase().includes("INPUT") || n.toUpperCase().includes("EXPENSE") || n.toUpperCase().includes("2025")) || workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
       const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet, { raw: true });
 
       if (jsonData.length === 0) {
-        showNotification('No data found in sheet.', 'error');
+        console.warn('No rows found in the detected sheet:', sheetName);
+        showNotification(`No data found in sheet "${sheetName}".`, 'error');
         return;
       }
 
       const newCatsMap = new Map<string, Set<string>>();
       const newMerchantsSet = new Set<string>();
       let importedCount = 0;
+      let skippedCount = 0;
 
       const tx = db.transaction(['transactions'], 'readwrite');
       const store = tx.objectStore('transactions');
 
       for (const row of jsonData) {
         const keys = Object.keys(row);
-        const dateKey = keys.find(k => k.toUpperCase().includes('DATE'));
-        const vendorKey = keys.find(k => k.toUpperCase().includes('VENDOR') || k.toUpperCase().includes('ITEM'));
-        const amountKey = keys.find(k => k.toUpperCase().includes('AMOU'));
-        const categoryKey = keys.find(k => k.toUpperCase().includes('CAT'));
-        const notesKey = keys.find(k => k.toUpperCase().includes('NOTE') || k.toUpperCase().includes('DESC'));
-        const typeKey = keys.find(k => k.toUpperCase().includes('TYPE'));
+        
+        // Flexible header detection
+        const dateKey = keys.find(k => {
+          const u = k.toUpperCase();
+          return u.includes('DATE') || u === 'WHEN';
+        });
+        const vendorKey = keys.find(k => {
+          const u = k.toUpperCase();
+          return u.includes('VENDOR') || u.includes('ITEM') || u.includes('PAYEE') || u.includes('MERCHANT') || u.includes('STORE');
+        });
+        const amountKey = keys.find(k => {
+          const u = k.toUpperCase();
+          return u.includes('AMOU') || u.includes('COST') || u.includes('PRICE') || u.includes('VALUE');
+        });
+        const categoryKey = keys.find(k => {
+          const u = k.toUpperCase();
+          return u.includes('CAT') || u.includes('TYPE') || u.includes('CLASS');
+        });
+        const notesKey = keys.find(k => {
+          const u = k.toUpperCase();
+          return u.includes('NOTE') || u.includes('DESC') || u.includes('MEMO') || u.includes('INFO');
+        });
+        const typeFlowKey = keys.find(k => k.toUpperCase() === 'TYPE' || k.toUpperCase().includes('FLOW'));
 
-        if (!dateKey || !amountKey) continue;
+        if (!dateKey || !amountKey) {
+          skippedCount++;
+          continue;
+        }
 
-        const rawAmount = String(row[amountKey]);
+        const rawAmountValue = row[amountKey];
+        const rawAmount = typeof rawAmountValue === 'string' ? rawAmountValue : String(rawAmountValue || 0);
         const amount = parseFloat(rawAmount.replace(/[$,\s]/g, '')) || 0;
+        
         const categoryFull = String(row[categoryKey] || 'Other');
         const [catName, subName] = categoryFull.includes(':') 
           ? categoryFull.split(':').map(s => s.trim()) 
           : [categoryFull, ''];
 
-        if (catName) {
+        if (catName && catName !== 'undefined') {
           if (!newCatsMap.has(catName)) newCatsMap.set(catName, new Set());
           if (subName) newCatsMap.get(catName)!.add(subName);
         }
+        
         const merchantName = String(row[vendorKey] || '').trim();
-        if (merchantName) newMerchantsSet.add(merchantName);
+        if (merchantName && merchantName !== 'undefined') newMerchantsSet.add(merchantName);
 
-        const type = (row[typeKey]?.toUpperCase() === 'INCOME' || (amount > 0 && catName === 'Salary')) 
-          ? TransactionType.INCOME 
-          : TransactionType.EXPENSE;
+        // Improved Income detection
+        const rawType = String(row[typeFlowKey] || '').toUpperCase();
+        const isIncome = rawType === 'INCOME' || 
+                         rawType === 'REVENUE' || 
+                         rawType === 'IN' ||
+                         (amount > 0 && (catName.toUpperCase().includes('SALARY') || catName.toUpperCase().includes('WAGES') || catName.toUpperCase().includes('DIVIDEND')));
 
         const item: Transaction = {
           date: parseLegacyDate(row[dateKey]),
           merchant: merchantName || 'Undefined',
           amount: Math.abs(amount),
-          type: type,
+          type: isIncome ? TransactionType.INCOME : TransactionType.EXPENSE,
           category: catName || 'Other',
           subCategory: subName || undefined,
           description: String(row[notesKey] || '')
@@ -338,8 +402,11 @@ const App: React.FC = () => {
       }
 
       tx.oncomplete = async () => {
+        console.log(`Import finished. Added: ${importedCount}, Skipped: ${skippedCount}`);
+        
+        // Register newly discovered categories and merchants
         for (const [catName, subs] of newCatsMap.entries()) {
-          const existing = categories.find(c => c.name === catName);
+          const existing = categories.find(c => c.name.toLowerCase() === catName.toLowerCase());
           if (!existing) {
             await addCategory(db, { name: catName, type: TransactionType.BOTH, subCategories: Array.from(subs) });
           } else {
@@ -354,13 +421,13 @@ const App: React.FC = () => {
         }
 
         await refreshData();
-        showNotification(`Imported ${importedCount} transactions.`);
+        showNotification(`Imported ${importedCount} transactions from ${sheetName}.`);
         markLocalChange();
       };
 
     } catch (err) {
-      console.error(err);
-      showNotification('Import failed', 'error');
+      console.error('Import process failed:', err);
+      showNotification('Excel import failed. Check console for details.', 'error');
     }
     if (legacyFileInputRef.current) legacyFileInputRef.current.value = '';
   };
@@ -400,6 +467,14 @@ const App: React.FC = () => {
     await deleteTransaction(db, id);
     await refreshData();
     showNotification('Transaction deleted');
+    markLocalChange();
+  };
+
+  const handleDeleteMultipleTransactions = async (ids: number[]) => {
+    if (!db || ids.length === 0) return;
+    await deleteTransactions(db, ids);
+    await refreshData();
+    showNotification(`${ids.length} transactions deleted`);
     markLocalChange();
   };
 
@@ -492,7 +567,8 @@ const App: React.FC = () => {
       merchant: t.merchant || 'Undefined',
       paymentMethod: t.paymentMethod,
       description: t.description || '',
-      type: t.type
+      type: t.type,
+      schedule: { frequency: 'none' }
     };
     addTemplate(db!, tmp).then(() => {
       refreshData();
@@ -501,10 +577,12 @@ const App: React.FC = () => {
     });
   };
 
-  const handlePostTemplate = (tmp: RecurringTemplate) => {
+  const handlePostTemplate = async (tmp: RecurringTemplate) => {
+    if (!db) return;
+    const today = getLocalDateString();
     const tx: Transaction = {
       amount: tmp.amount,
-      date: getLocalDateString(),
+      date: today,
       category: tmp.category,
       subCategory: tmp.subCategory,
       merchant: tmp.merchant || 'Undefined',
@@ -512,11 +590,12 @@ const App: React.FC = () => {
       description: tmp.description,
       type: tmp.type
     };
-    addTransaction(db!, tx).then(() => {
-      refreshData();
-      showNotification('Transaction posted');
-      markLocalChange();
-    });
+    
+    await addTransaction(db, tx);
+    await updateTemplate(db, { ...tmp, lastPostedDate: today });
+    await refreshData();
+    showNotification('Transaction posted');
+    markLocalChange();
   };
 
   const handleDeleteTemplate = (id: number) => deleteTemplate(db!, id).then(() => { refreshData(); markLocalChange(); });
@@ -593,6 +672,7 @@ const App: React.FC = () => {
               merchants={merchants} 
               paymentMethods={paymentMethods}
               onDelete={handleDeleteTransaction} 
+              onDeleteMultiple={handleDeleteMultipleTransactions}
               onAddTransaction={handleAddTransaction} 
               onUpdateTransaction={handleUpdateTransaction} 
               onAddCategory={handleAddCategory} 

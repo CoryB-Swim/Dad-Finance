@@ -1,6 +1,5 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import { Transaction, TransactionType, Category, Merchant, PaymentMethod } from '../types';
 import { 
   Search, 
@@ -18,12 +17,19 @@ import {
   TrendingUp, 
   TrendingDown, 
   PlusCircle, 
-  MoreHorizontal,
   FileText,
   ListOrdered,
   Layers,
   Filter,
-  ChevronDown
+  Info,
+  DollarSign,
+  Repeat,
+  SortAsc,
+  SortDesc,
+  Plus,
+  AlertTriangle,
+  Sparkles,
+  CheckCircle
 } from 'lucide-react';
 import TransactionForm from './TransactionForm';
 
@@ -33,6 +39,7 @@ interface TransactionListProps {
   merchants: Merchant[];
   paymentMethods: PaymentMethod[];
   onDelete: (id: number) => void;
+  onDeleteMultiple?: (ids: number[]) => void;
   onAddTransaction: (t: Transaction) => void;
   onUpdateTransaction: (t: Transaction) => void;
   onAddCategory: (c: Category) => void;
@@ -58,6 +65,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
   merchants,
   paymentMethods,
   onDelete,
+  onDeleteMultiple,
   onAddTransaction,
   onUpdateTransaction,
   onAddCategory,
@@ -79,34 +87,27 @@ const TransactionList: React.FC<TransactionListProps> = ({
   
   const [isAdding, setIsAdding] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  const [viewingTransaction, setViewingTransaction] = useState<Transaction | null>(null);
   const [deletingTransaction, setDeletingTransaction] = useState<Transaction | null>(null);
+  const [isCleaningDuplicates, setIsCleaningDuplicates] = useState(false);
+  
+  const [showOnlyDuplicates, setShowOnlyDuplicates] = useState(false);
   
   const [selectedMerchantForDetail, setSelectedMerchantForDetail] = useState<string | null>(null);
   const [selectedCategoryForDetail, setSelectedCategoryForDetail] = useState<string | null>(null);
   const [selectedSubCategoryForDetail, setSelectedSubCategoryForDetail] = useState<{cat: string, sub: string} | null>(null);
   const [selectedPaymentForDetail, setSelectedPaymentForDetail] = useState<string | null>(null);
   
-  const [activeActionsMenu, setActiveActionsMenu] = useState<number | null>(null);
-  const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
-
-  const actionsMenuRef = useRef<HTMLDivElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (actionsMenuRef.current && !actionsMenuRef.current.contains(event.target as Node)) {
-        setActiveActionsMenu(null);
-      }
       if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
         setShowSuggestions(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
-    window.addEventListener('scroll', () => setActiveActionsMenu(null), true);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      window.removeEventListener('scroll', () => setActiveActionsMenu(null), true);
-    };
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   useEffect(() => {
@@ -129,18 +130,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
 
   const removeFilter = (val: string) => {
     setActiveFilters(activeFilters.filter(f => f !== val));
-  };
-
-  const handleToggleActions = (e: React.MouseEvent, id: number) => {
-    e.stopPropagation();
-    if (activeActionsMenu === id) {
-      setActiveActionsMenu(null);
-      setMenuAnchorRect(null);
-    } else {
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      setMenuAnchorRect(rect);
-      setActiveActionsMenu(id);
-    }
   };
 
   const setDateRange = (range: 'today' | 'week' | 'month' | 'year' | 'lastYear') => {
@@ -205,37 +194,38 @@ const TransactionList: React.FC<TransactionListProps> = ({
     return unique.slice(0, 10);
   }, [inputValue, categories, merchants, paymentMethods, activeFilters]);
 
-  const categoryStats = useMemo(() => {
-    if (!selectedCategoryForDetail) return null;
-    const catTxs = transactions.filter(t => t.category === selectedCategoryForDetail);
-    const totalSpent = catTxs.filter(t => t.type === TransactionType.EXPENSE).reduce((s, t) => s + t.amount, 0);
-    return { name: selectedCategoryForDetail, count: catTxs.length, totalSpent };
-  }, [selectedCategoryForDetail, transactions]);
+  // DUPLICATE DETECTION LOGIC
+  const duplicateInfo = useMemo(() => {
+    const groups: Record<string, Transaction[]> = {};
+    transactions.forEach(t => {
+      // Create a fingerprint of the transaction
+      const fingerprint = `${t.date}|${t.amount}|${t.merchant || 'None'}|${t.category}|${t.type}`;
+      if (!groups[fingerprint]) groups[fingerprint] = [];
+      groups[fingerprint].push(t);
+    });
 
-  const subCategoryStats = useMemo(() => {
-    if (!selectedSubCategoryForDetail) return null;
-    const { cat, sub } = selectedSubCategoryForDetail;
-    const subTxs = transactions.filter(t => t.category === cat && t.subCategory === sub);
-    const totalSpent = subTxs.filter(t => t.type === TransactionType.EXPENSE).reduce((s, t) => s + t.amount, 0);
-    return { name: sub, count: subTxs.length, totalSpent, parent: cat };
-  }, [selectedSubCategoryForDetail, transactions]);
+    const duplicateIds = new Set<number>();
+    const allFlaggedIds = new Set<number>();
+    
+    Object.values(groups).forEach(group => {
+      if (group.length > 1) {
+        // Sort by ID to keep the oldest one
+        const sorted = [...group].sort((a, b) => (a.id || 0) - (b.id || 0));
+        sorted.forEach((item, idx) => {
+          if (item.id) {
+            allFlaggedIds.add(item.id);
+            if (idx > 0) duplicateIds.add(item.id); // Add to delete list (all except first)
+          }
+        });
+      }
+    });
 
-  const merchantStats = useMemo(() => {
-    if (!selectedMerchantForDetail) return null;
-    const mName = selectedMerchantForDetail;
-    const mTxs = transactions.filter(t => t.merchant === mName);
-    const totalSpent = mTxs.filter(t => t.type === TransactionType.EXPENSE).reduce((s, t) => s + t.amount, 0);
-    const merchantObj = merchants.find(m => m.name === mName);
-    return { name: mName, count: mTxs.length, totalSpent, website: merchantObj?.website, location: merchantObj?.location, phone: merchantObj?.phone };
-  }, [selectedMerchantForDetail, transactions, merchants]);
-
-  const paymentStats = useMemo(() => {
-    if (!selectedPaymentForDetail) return null;
-    const pName = selectedPaymentForDetail;
-    const pTxs = transactions.filter(t => t.paymentMethod === pName);
-    const totalSpent = pTxs.filter(t => t.type === TransactionType.EXPENSE).reduce((s, t) => s + t.amount, 0);
-    return { name: pName, count: pTxs.length, totalSpent };
-  }, [selectedPaymentForDetail, transactions]);
+    return { 
+      deleteList: Array.from(duplicateIds), 
+      flaggedIds: allFlaggedIds, // All IDs that are part of a duplicate pair
+      totalPairs: Object.values(groups).filter(g => g.length > 1).length
+    };
+  }, [transactions]);
 
   const filteredTransactions = useMemo(() => {
     let result = transactions.filter(t => {
@@ -251,7 +241,13 @@ const TransactionList: React.FC<TransactionListProps> = ({
       const matchesType = typeFilter === 'ALL' || t.type === typeFilter;
       const matchesStartDate = !startDate || t.date >= startDate;
       const matchesEndDate = !endDate || t.date <= endDate;
-      return matchesPills && matchesType && matchesStartDate && matchesEndDate;
+      
+      let matchesDuplicates = true;
+      if (showOnlyDuplicates && t.id) {
+        matchesDuplicates = duplicateInfo.flaggedIds.has(t.id);
+      }
+
+      return matchesPills && matchesType && matchesStartDate && matchesEndDate && matchesDuplicates;
     });
 
     result.sort((a, b) => {
@@ -263,7 +259,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
       return sortConfig.direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
     });
     return result;
-  }, [transactions, activeFilters, typeFilter, startDate, endDate, sortConfig]);
+  }, [transactions, activeFilters, typeFilter, startDate, endDate, sortConfig, showOnlyDuplicates, duplicateInfo]);
 
   const summaryMetrics = useMemo(() => {
     const count = filteredTransactions.length;
@@ -277,6 +273,19 @@ const TransactionList: React.FC<TransactionListProps> = ({
   }, [filteredTransactions]);
 
   const toggleSort = (key: SortKey) => setSortConfig(p => ({ key, direction: p.key === key && p.direction === 'asc' ? 'desc' : 'asc' }));
+
+  const handleCleanDuplicates = () => {
+    if (onDeleteMultiple && duplicateInfo.deleteList.length > 0) {
+      onDeleteMultiple(duplicateInfo.deleteList);
+      setIsCleaningDuplicates(false);
+      setShowOnlyDuplicates(false);
+    }
+  };
+
+  const SortIndicator = ({ columnKey }: { columnKey: SortKey }) => {
+    if (sortConfig.key !== columnKey) return <SortAsc size={10} className="ml-1 opacity-20" />;
+    return sortConfig.direction === 'asc' ? <SortAsc size={10} className="ml-1 text-blue-600" /> : <SortDesc size={10} className="ml-1 text-blue-600" />;
+  };
 
   const InfoCard = ({ title, subTitle, stats, icon: Icon, colorClass, onClose, onQuickFilter }: any) => (
     <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
@@ -322,65 +331,133 @@ const TransactionList: React.FC<TransactionListProps> = ({
   );
 
   return (
-    <div className="space-y-4">
-      {/* Dynamic Info Cards */}
-      {selectedCategoryForDetail && categoryStats && (
-        <InfoCard 
-          title={categoryStats.name} 
-          subTitle="Category Analysis" 
-          icon={Tag} 
-          colorClass="bg-emerald-600"
-          onClose={() => setSelectedCategoryForDetail(null)}
-          onQuickFilter={() => { addFilter(categoryStats.name); setSelectedCategoryForDetail(null); }}
-          stats={[
-            { label: 'Total Records', value: categoryStats.count },
-            { label: 'Period Volume', value: `$${categoryStats.totalSpent.toLocaleString()}` }
-          ]}
-        />
+    <div className="space-y-4 animate-in fade-in duration-500 pb-20">
+      {/* Duplicate Detection Alert Banner */}
+      {duplicateInfo.deleteList.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 animate-in slide-in-from-top duration-500">
+          <div className="flex items-center gap-4 text-center md:text-left">
+            <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center text-amber-600 shrink-0">
+              <AlertTriangle size={24} />
+            </div>
+            <div>
+              <h4 className="text-sm font-black text-amber-900 uppercase tracking-tight">Potential Duplicates Detected</h4>
+              <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest">We found {duplicateInfo.deleteList.length} entries that look like copies of existing records.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <button 
+              onClick={() => setShowOnlyDuplicates(!showOnlyDuplicates)}
+              className={`flex-1 md:flex-none px-4 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${showOnlyDuplicates ? 'bg-amber-600 text-white border-amber-600 shadow-lg' : 'bg-white text-amber-600 border-amber-200 hover:bg-amber-100'}`}
+            >
+              {showOnlyDuplicates ? 'Viewing All' : 'Review Copies'}
+            </button>
+            <button 
+              onClick={() => setIsCleaningDuplicates(true)}
+              className="flex-1 md:flex-none px-4 py-2.5 bg-rose-600 text-white rounded-xl text-[9px] font-black uppercase tracking-widest shadow-lg shadow-rose-100 hover:bg-rose-700 transition-all active:scale-95"
+            >
+              Purge {duplicateInfo.deleteList.length} Entries
+            </button>
+          </div>
+        </div>
       )}
-      {selectedSubCategoryForDetail && subCategoryStats && (
-        <InfoCard 
-          title={subCategoryStats.name} 
-          subTitle={`Sub-category of ${subCategoryStats.parent}`} 
-          icon={Layers} 
-          colorClass="bg-indigo-600"
-          onClose={() => setSelectedSubCategoryForDetail(null)}
-          onQuickFilter={() => { addFilter(subCategoryStats.name); setSelectedSubCategoryForDetail(null); }}
-          stats={[
-            { label: 'Total Records', value: subCategoryStats.count },
-            { label: 'Period Volume', value: `$${subCategoryStats.totalSpent.toLocaleString()}` }
-          ]}
-        />
-      )}
-      {selectedMerchantForDetail && merchantStats && (
-        <InfoCard 
-          title={merchantStats.name} 
-          subTitle="Payee / Merchant Profile" 
-          icon={Store} 
-          colorClass="bg-amber-600"
-          onClose={() => setSelectedMerchantForDetail(null)}
-          onQuickFilter={() => { addFilter(merchantStats.name); setSelectedMerchantForDetail(null); }}
-          stats={[
-            { label: 'Visits', value: merchantStats.count },
-            { label: 'Period Volume', value: `$${merchantStats.totalSpent.toLocaleString()}` },
-            { label: 'Site', value: merchantStats.website || 'N/A' },
-            { label: 'Location', value: merchantStats.location || 'N/A' }
-          ]}
-        />
-      )}
-      {selectedPaymentForDetail && paymentStats && (
-        <InfoCard 
-          title={selectedPaymentForDetail} 
-          subTitle="Payment Method Profile" 
-          icon={CreditCard} 
-          colorClass="bg-rose-600"
-          onClose={() => setSelectedPaymentForDetail(null)}
-          onQuickFilter={() => { addFilter(selectedPaymentForDetail!); setSelectedPaymentForDetail(null); }}
-          stats={[
-            { label: 'Usage Count', value: paymentStats.count },
-            { label: 'Period Volume', value: `$${paymentStats.totalSpent.toLocaleString()}` }
-          ]}
-        />
+
+      {/* Viewing Transaction Modal - Refined width to max-w-md */}
+      {viewingTransaction && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[150] flex items-center justify-center p-4" onClick={() => setViewingTransaction(null)}>
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className={`p-6 flex items-center justify-between border-b border-gray-100 ${viewingTransaction.type === TransactionType.INCOME ? 'bg-emerald-50/50' : 'bg-rose-50/50'}`}>
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-xl ${viewingTransaction.type === TransactionType.INCOME ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
+                  <Info size={20} />
+                </div>
+                <h3 className="text-lg font-black text-gray-800 uppercase tracking-tight">Transaction Details</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => { setEditingTransaction(viewingTransaction); setViewingTransaction(null); }}
+                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-white rounded-lg transition-all"
+                >
+                  <Edit2 size={18} />
+                </button>
+                <button 
+                  onClick={() => setViewingTransaction(null)}
+                  className="p-2 text-gray-400 hover:text-rose-600 hover:bg-white rounded-lg transition-all"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-8 space-y-8">
+              <div className="flex flex-col items-center text-center pb-6 border-b border-gray-100">
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Transaction Value</p>
+                <h2 className={`text-4xl font-black ${viewingTransaction.type === TransactionType.INCOME ? 'text-emerald-600' : 'text-gray-900'}`}>
+                  {viewingTransaction.type === TransactionType.INCOME ? '+' : '-'}${viewingTransaction.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </h2>
+                <div className="mt-2 flex items-center gap-2 text-gray-400 font-bold text-xs">
+                  <Calendar size={14} /> {viewingTransaction.date}
+                </div>
+                {viewingTransaction.id && duplicateInfo.flaggedIds.has(viewingTransaction.id) && (
+                  <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-600 rounded-full border border-amber-100 text-[8px] font-black uppercase tracking-widest">
+                    <AlertTriangle size={10} /> Multiple entries match this record
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-x-8 gap-y-6">
+                <div>
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Store size={10} className="text-blue-500" /> Payee</p>
+                  <p className="text-sm font-black text-gray-900 uppercase tracking-tight">{viewingTransaction.merchant || 'Undefined'}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Tag size={10} className="text-emerald-500" /> Category</p>
+                  <p className="text-sm font-black text-gray-900 uppercase tracking-tight">{viewingTransaction.category}</p>
+                  {viewingTransaction.subCategory && (
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">{viewingTransaction.subCategory}</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><CreditCard size={10} className="text-rose-500" /> Payment</p>
+                  <p className="text-sm font-black text-gray-900 uppercase tracking-tight">{viewingTransaction.paymentMethod || 'N/A'}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Info size={10} className="text-indigo-500" /> Flow</p>
+                  <p className={`text-sm font-black uppercase tracking-tight ${viewingTransaction.type === TransactionType.INCOME ? 'text-emerald-600' : 'text-rose-600'}`}>{viewingTransaction.type}</p>
+                </div>
+              </div>
+
+              {viewingTransaction.description && (
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><FileText size={10} /> Notes</p>
+                  <p className="text-xs font-semibold text-gray-600 leading-relaxed italic">"{viewingTransaction.description}"</p>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-3 pt-4">
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => { onSaveAsTemplate(viewingTransaction!); setViewingTransaction(null); }}
+                    className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all active:scale-[0.98]"
+                  >
+                    <Repeat size={14} /> Save as Recurring
+                  </button>
+                  <button 
+                    onClick={() => { setDeletingTransaction(viewingTransaction!); setViewingTransaction(null); }}
+                    className="flex-1 py-4 bg-rose-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 hover:bg-rose-700 transition-all active:scale-[0.98]"
+                  >
+                    <Trash2 size={14} /> Delete Entry
+                  </button>
+                </div>
+                <button 
+                  onClick={() => setViewingTransaction(null)}
+                  className="w-full py-4 bg-gray-100 text-gray-500 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-all active:scale-[0.98]"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -388,43 +465,19 @@ const TransactionList: React.FC<TransactionListProps> = ({
           <div className="p-2 bg-white rounded-lg shadow-sm border border-gray-100 text-blue-600">
             <ListOrdered size={20} />
           </div>
-          <h3 className="text-lg font-black text-gray-800 uppercase tracking-tight">Financial Ledger</h3>
+          <h3 className="text-xl font-black text-gray-800 uppercase tracking-tight">Financial Ledger</h3>
         </div>
         <button 
           onClick={() => setIsAdding(true)}
-          className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-100 hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center gap-2"
+          style={{ backgroundColor: '#2563EB' }}
+          className="text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
         >
-          <PlusCircle size={16} /> New Transaction
+          <Plus size={16} /> ADD NEW
         </button>
       </div>
 
-      {activeActionsMenu !== null && menuAnchorRect && createPortal(
-        <div 
-          ref={actionsMenuRef}
-          style={{ position: 'fixed', top: menuAnchorRect.bottom + 4, left: menuAnchorRect.right - 128, zIndex: 9999, width: '8rem' }}
-          className="bg-white rounded-xl shadow-2xl border border-gray-100 py-1.5 animate-in fade-in slide-in-from-top-1 duration-150"
-        >
-          {(() => {
-            const t = transactions.find(tx => tx.id === activeActionsMenu);
-            if (!t) return null;
-            return (
-              <>
-                <button onClick={() => { setEditingTransaction(t); setActiveActionsMenu(null); }} className="w-full text-left px-3 py-1.5 text-[10px] font-black uppercase text-gray-600 hover:bg-blue-50 hover:text-blue-600 flex items-center gap-2"><Edit2 size={12} /> Edit</button>
-                <button onClick={() => { onSaveAsTemplate(t); setActiveActionsMenu(null); }} className="w-full text-left px-3 py-1.5 text-[10px] font-black uppercase text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 flex items-center gap-2"><FileText size={12} /> Template</button>
-                <div className="my-1 border-t border-gray-50"></div>
-                <button onClick={() => { setDeletingTransaction(t); setActiveActionsMenu(null); }} className="w-full text-left px-3 py-1.5 text-[10px] font-black uppercase text-rose-500 hover:bg-rose-50 flex items-center gap-2"><Trash2 size={12} /> Delete</button>
-              </>
-            );
-          })()}
-        </div>,
-        document.body
-      )}
-
-      {/* Overhauled Filter Panel */}
       <div className="sticky top-0 z-30 space-y-3 bg-gray-50/90 backdrop-blur-md py-2">
         <div className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100 space-y-4">
-          
-          {/* Row 1: Integrated Search with Chips & Suggestions */}
           <div className="flex flex-col md:flex-row gap-4">
             <div className="flex-1 relative group" ref={searchContainerRef}>
               <div className="min-h-[46px] w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl flex flex-wrap gap-2 items-center focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 transition-all">
@@ -468,20 +521,27 @@ const TransactionList: React.FC<TransactionListProps> = ({
               )}
             </div>
 
-            <div className="md:w-48 shrink-0">
+            <div className="md:w-48 shrink-0 flex gap-2">
               <select 
                 value={typeFilter} 
                 onChange={(e) => setTypeFilter(e.target.value as any)} 
-                className="w-full h-[46px] px-4 bg-gray-50 rounded-xl border border-gray-200 text-[10px] font-black uppercase outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all cursor-pointer appearance-none"
+                className="flex-1 h-[46px] px-4 bg-gray-50 rounded-xl border border-gray-200 text-[10px] font-black uppercase outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all cursor-pointer appearance-none"
               >
                 <option value="ALL">All Flows</option>
                 <option value={TransactionType.INCOME}>Income only</option>
                 <option value={TransactionType.EXPENSE}>Expenses only</option>
               </select>
+              {duplicateInfo.deleteList.length > 0 && (
+                <button 
+                  onClick={() => setShowOnlyDuplicates(!showOnlyDuplicates)}
+                  className={`h-[46px] px-4 rounded-xl border transition-all flex items-center justify-center gap-2 ${showOnlyDuplicates ? 'bg-amber-600 border-amber-600 text-white' : 'bg-amber-50 border-amber-200 text-amber-600'}`}
+                >
+                  <Sparkles size={16} />
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Row 2: Date Controls (Pickers + Presets) */}
           <div className="flex flex-col xl:flex-row gap-4 pt-1 border-t border-gray-50 mt-4">
             <div className="flex flex-wrap gap-2 items-center">
               <PresetBtn label="Today" onClick={() => setDateRange('today')} active={startDate === endDate && startDate === getLocalDateString()} />
@@ -516,74 +576,137 @@ const TransactionList: React.FC<TransactionListProps> = ({
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto overflow-y-auto max-h-[calc(100vh-320px)]">
-        <table className="w-full text-left text-[11px] table-fixed min-w-[900px] border-separate border-spacing-0">
-          <thead className="bg-gray-50 text-gray-400 font-black uppercase tracking-widest sticky top-0 z-20 shadow-[0_1px_0_rgba(0,0,0,0.05)]">
-            <tr>
-              <th className="px-4 py-3 bg-gray-50 border-b border-gray-100 cursor-pointer w-[100px]" onClick={() => toggleSort('date')}>Date</th>
-              <th className="px-4 py-3 bg-gray-50 border-b border-gray-100 cursor-pointer w-[160px]" onClick={() => toggleSort('category')}>Category</th>
-              <th className="px-4 py-3 bg-gray-50 border-b border-gray-100 cursor-pointer w-[160px]" onClick={() => toggleSort('subCategory')}>Sub-Category</th>
-              <th className="px-4 py-3 bg-gray-50 border-b border-gray-100 cursor-pointer w-[180px]" onClick={() => toggleSort('merchant')}>Payee</th>
-              <th className="px-4 py-3 bg-gray-50 border-b border-gray-100 cursor-pointer w-[150px]" onClick={() => toggleSort('paymentMethod')}>Payment Method</th>
-              <th className="px-4 py-3 bg-gray-50 border-b border-gray-100 text-right cursor-pointer w-[100px]" onClick={() => toggleSort('amount')}>Amount</th>
-              <th className="px-4 py-3 bg-gray-50 border-b border-gray-100 text-center w-[60px]"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50">
-            {filteredTransactions.map(t => (
-              <tr key={t.id} className="hover:bg-blue-50/20 group transition-colors">
-                <td className="px-4 py-2.5 text-gray-400 font-bold">{t.date}</td>
-                <td className="px-4 py-2.5">
-                  <button onClick={() => setSelectedCategoryForDetail(t.category)} className="font-black text-gray-800 truncate hover:text-blue-600">{t.category}</button>
-                </td>
-                <td className="px-4 py-2.5">
-                  {t.subCategory ? (
-                    <button onClick={() => setSelectedSubCategoryForDetail({ cat: t.category, sub: t.subCategory! })} className="font-bold text-gray-500 truncate hover:text-blue-600">{t.subCategory}</button>
-                  ) : <span className="text-gray-200 italic">-</span>}
-                </td>
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => setSelectedMerchantForDetail(t.merchant || 'Undefined')} className="font-bold text-gray-700 truncate hover:text-blue-600 max-w-[120px]">
-                      {t.merchant || 'Undefined'}
-                    </button>
-                    {t.description && (
-                      <div className="relative group/note shrink-0">
-                        <FileText size={12} className="text-gray-300 group-hover/note:text-blue-500 transition-colors cursor-help" />
-                        <div className="absolute bottom-full left-0 mb-2 w-64 bg-white text-gray-700 p-3 rounded-xl text-[11px] font-semibold shadow-2xl border border-gray-100 opacity-0 invisible group-hover/note:opacity-100 group-hover/note:visible transition-all z-50 text-left whitespace-normal break-words">
-                          <div className="text-[9px] font-black uppercase text-blue-500 mb-1 border-b border-blue-50 pb-1">Notes</div>
-                          <div className="pt-1">{t.description}</div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </td>
-                <td className="px-4 py-2.5">
-                  {t.paymentMethod ? (
-                    <button onClick={() => setSelectedPaymentForDetail(t.paymentMethod!)} className="flex items-center gap-1.5 text-gray-500 font-bold truncate hover:text-blue-600">
-                      <CreditCard size={10} className="text-gray-300" /> {t.paymentMethod}
-                    </button>
-                  ) : <span className="text-gray-200">-</span>}
-                </td>
-                <td className={`px-4 py-2.5 text-right font-black ${t.type === TransactionType.INCOME ? 'text-emerald-500' : 'text-rose-500'}`}>
-                  {t.type === TransactionType.INCOME ? '+' : '-'}${t.amount.toFixed(2)}
-                </td>
-                <td className="px-4 py-2.5 text-center">
-                  <button onClick={(e) => t.id && handleToggleActions(e, t.id)} className={`p-1 hover:bg-gray-100 rounded-md transition-all ${activeActionsMenu === t.id ? 'text-blue-600 bg-blue-50' : 'text-gray-300'}`}>
-                    <MoreHorizontal size={14} />
-                  </button>
-                </td>
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-320px)]">
+          <table className="w-full text-left border-collapse min-w-[900px]">
+            <thead className="sticky top-0 z-20">
+              <tr className="bg-gray-50 border-b border-gray-100 text-[9px] font-black text-gray-400 uppercase tracking-widest">
+                <th className="px-6 py-4 w-28 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => toggleSort('date')}>
+                  <div className="flex items-center">Date <SortIndicator columnKey="date" /></div>
+                </th>
+                <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => toggleSort('category')}>
+                  <div className="flex items-center">Category <SortIndicator columnKey="category" /></div>
+                </th>
+                <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => toggleSort('subCategory')}>
+                  <div className="flex items-center">Sub-Category <SortIndicator columnKey="subCategory" /></div>
+                </th>
+                <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => toggleSort('merchant')}>
+                  <div className="flex items-center">Payee <SortIndicator columnKey="merchant" /></div>
+                </th>
+                <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => toggleSort('paymentMethod')}>
+                  <div className="flex items-center">Payment Method <SortIndicator columnKey="paymentMethod" /></div>
+                </th>
+                <th className="px-6 py-4 text-right cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => toggleSort('amount')}>
+                  <div className="flex items-center justify-end">Amount <SortIndicator columnKey="amount" /></div>
+                </th>
               </tr>
-            ))}
-            {filteredTransactions.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-16 text-center text-gray-200 italic font-bold">No entries found.</td></tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {filteredTransactions.map(t => {
+                const isDuplicate = t.id && duplicateInfo.flaggedIds.has(t.id);
+                const isToBeDeleted = t.id && duplicateInfo.deleteList.includes(t.id);
+                
+                return (
+                  <tr 
+                    key={t.id} 
+                    className={`hover:bg-blue-50/20 group transition-colors cursor-pointer ${isDuplicate ? 'bg-amber-50/10' : ''}`}
+                    onClick={() => setViewingTransaction(t)}
+                  >
+                    <td className="px-6 py-3.5 text-gray-400 font-bold text-[10px] uppercase tracking-tighter">
+                      <div className="flex items-center gap-2">
+                        {isToBeDeleted && <div className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-sm" title="Marked as copy" />}
+                        {t.date}
+                      </div>
+                    </td>
+                    <td className="px-6 py-3.5">
+                      <div className="flex items-center gap-2">
+                        <button onClick={(e) => { e.stopPropagation(); setSelectedCategoryForDetail(t.category); }} className="font-black text-gray-900 uppercase tracking-tight text-xs hover:text-blue-600">{t.category}</button>
+                        {isDuplicate && !isToBeDeleted && <span className="text-[7px] font-black text-amber-600 bg-amber-50 px-1 rounded border border-amber-100">Original</span>}
+                        {isToBeDeleted && <span className="text-[7px] font-black text-rose-500 bg-rose-50 px-1 rounded border border-rose-100">Copy</span>}
+                      </div>
+                    </td>
+                    <td className="px-6 py-3.5">
+                      {t.subCategory ? (
+                        <button onClick={(e) => { e.stopPropagation(); setSelectedSubCategoryForDetail({ cat: t.category, sub: t.subCategory! }); }} className="text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-blue-600">{t.subCategory}</button>
+                      ) : <span className="text-gray-200 italic">-</span>}
+                    </td>
+                    <td className="px-6 py-3.5">
+                      <div className="flex items-center gap-2">
+                        <button onClick={(e) => { e.stopPropagation(); setSelectedMerchantForDetail(t.merchant || 'Undefined'); }} className="font-black text-gray-700 uppercase tracking-tight text-xs hover:text-blue-600 truncate max-w-[150px]">
+                          {t.merchant || 'Undefined'}
+                        </button>
+                        {t.description && (
+                          <div className="relative group/note shrink-0">
+                            <FileText size={12} className="text-gray-300 group-hover/note:text-blue-500 transition-colors cursor-help" />
+                            <div className="absolute bottom-full left-0 mb-2 w-64 bg-white text-gray-700 p-3 rounded-xl text-[11px] font-semibold shadow-2xl border border-gray-100 opacity-0 invisible group-hover/note:opacity-100 group-hover/note:visible transition-all z-50 text-left whitespace-normal break-words">
+                              <div className="text-[9px] font-black uppercase text-blue-500 mb-1 border-b border-blue-50 pb-1">Notes</div>
+                              <div className="pt-1">{t.description}</div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-3.5">
+                      {t.paymentMethod ? (
+                        <button onClick={(e) => { e.stopPropagation(); setSelectedPaymentForDetail(t.paymentMethod!); }} className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-blue-600">
+                          <CreditCard size={12} className="text-gray-300" /> {t.paymentMethod}
+                        </button>
+                      ) : <span className="text-gray-200">-</span>}
+                    </td>
+                    <td className={`px-6 py-3.5 text-right font-black text-sm ${t.type === TransactionType.INCOME ? 'text-emerald-500' : 'text-gray-900'}`}>
+                      {t.type === TransactionType.INCOME ? '+' : '-'}${t.amount.toFixed(2)}
+                    </td>
+                  </tr>
+                );
+              })}
+              {filteredTransactions.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-16 text-center">
+                    <div className="flex flex-col items-center gap-2 opacity-20">
+                      <ListOrdered size={40} />
+                      <p className="text-xs font-black uppercase tracking-widest">No Records Found</p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
+      {/* Bulk Delete Confirm Modal */}
+      {isCleaningDuplicates && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-3xl p-8 text-center border border-gray-100 shadow-2xl">
+            <div className="w-20 h-20 bg-rose-50 text-rose-500 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner animate-pulse">
+              <Trash2 size={32} />
+            </div>
+            <h3 className="text-xl font-black uppercase mb-2 tracking-tight">Purge All Copies?</h3>
+            <p className="text-sm text-gray-500 mb-8 leading-relaxed px-4">
+              This will safely remove all <span className="font-bold text-gray-900">{duplicateInfo.deleteList.length}</span> identical entries, keeping only the original record for each.
+            </p>
+            <div className="flex flex-col gap-3">
+              <button 
+                onClick={handleCleanDuplicates}
+                className="w-full py-4 rounded-2xl bg-rose-600 text-white font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-100 hover:bg-rose-700 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+              >
+                <CheckCircle size={14} /> Clear {duplicateInfo.deleteList.length} Duplicates
+              </button>
+              <button 
+                onClick={() => setIsCleaningDuplicates(false)}
+                className="w-full py-4 rounded-2xl bg-gray-100 text-gray-500 font-black uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-all"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Transaction Add/Edit Modal - Refined to max-w-4xl */}
       {(isAdding || editingTransaction) && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
               <h3 className="font-black text-gray-800 uppercase tracking-tight text-xs flex items-center gap-2">
                 {editingTransaction ? <Edit2 size={14} /> : <PlusCircle size={14} />}
@@ -611,9 +734,10 @@ const TransactionList: React.FC<TransactionListProps> = ({
         </div>
       )}
 
+      {/* Delete Record Confirmation - Corrected to max-w-sm */}
       {deletingTransaction && (
-        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-sm rounded-2xl p-6 text-center border border-gray-100 shadow-2xl">
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-2xl p-6 text-center border border-gray-100 shadow-2xl">
             <AlertCircle size={40} className="mx-auto text-rose-500 mb-4" />
             <h3 className="text-xl font-black uppercase mb-2">Delete Record?</h3>
             <p className="text-sm text-gray-500 mb-6">This action cannot be undone.</p>

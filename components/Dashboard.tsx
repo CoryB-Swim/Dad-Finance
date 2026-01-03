@@ -1,3 +1,4 @@
+
 import React, { useMemo, useState } from 'react';
 import { Transaction, TransactionType, Category } from '../types';
 import { 
@@ -24,6 +25,10 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  
+  // Dashboard Sorting States
+  const [merchantSortKey, setMerchantSortKey] = useState<string>('total');
+  const [merchantSortOrder, setMerchantSortOrder] = useState<'asc' | 'desc'>('desc');
 
   // Filtering Logic
   const filteredTransactions = useMemo(() => {
@@ -88,10 +93,37 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
       stats[t.merchant].total += t.amount;
       stats[t.merchant].count += 1;
     });
-    return Object.entries(stats)
-      .map(([name, s]) => ({ name, ...s, average: s.total / s.count }))
-      .sort((a, b) => b.total - a.total);
-  }, [filteredTransactions]);
+    
+    let result = Object.entries(stats).map(([name, s]) => ({ 
+      name, 
+      ...s, 
+      average: s.total / s.count 
+    }));
+
+    return result.sort((a, b) => {
+      let valA: any = (a as any)[merchantSortKey];
+      let valB: any = (b as any)[merchantSortKey];
+      
+      if (typeof valA === 'string') {
+        valA = valA.toLowerCase();
+        valB = valB.toLowerCase();
+      }
+      
+      if (valA < valB) return merchantSortOrder === 'asc' ? -1 : 1;
+      if (valA > valB) return merchantSortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [filteredTransactions, merchantSortKey, merchantSortOrder]);
+
+  const handleMerchantSort = (key: string) => {
+    setMerchantSortOrder(prev => (merchantSortKey === key && prev === 'asc' ? 'desc' : 'asc'));
+    setMerchantSortKey(key);
+  };
+
+  const SortIndicator = ({ keyName, currentKey, order }: { keyName: string, currentKey: string, order: 'asc' | 'desc' }) => {
+    if (currentKey !== keyName) return <SortAsc size={10} className="ml-1 opacity-20" />;
+    return order === 'asc' ? <SortAsc size={10} className="ml-1 text-blue-600" /> : <SortDesc size={10} className="ml-1 text-blue-600" />;
+  };
 
   // Hierarchical Data for the Ledger Tab
   const hierarchicalGrid = useMemo(() => {
@@ -148,7 +180,7 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
       </div>
       <div>
         <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest mb-1">{title}</p>
-        <p className="text-2xl font-black text-gray-900 leading-none">${amount.toLocaleString()}</p>
+        <p className="text-2xl font-black text-gray-900 leading-none">${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
       </div>
     </div>
   );
@@ -254,11 +286,24 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
           <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
              <div className="p-6 border-b border-gray-50 flex items-center justify-between">
                <h3 className="text-lg font-black text-gray-800 uppercase tracking-tight">Top Payee Analysis</h3>
-               <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest bg-gray-50 px-3 py-1 rounded-full border border-gray-100">Sorted by Volume</span>
+               <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest bg-gray-50 px-3 py-1 rounded-full border border-gray-100">Performance Metrics</span>
              </div>
              <table className="w-full text-left">
                <thead className="bg-gray-50 text-[10px] font-black uppercase text-gray-400 border-b border-gray-100">
-                 <tr><th className="px-8 py-4">Merchant / Payee</th><th className="px-8 py-4">Core Category</th><th className="px-8 py-4 text-center">Visit Count</th><th className="px-8 py-4 text-right">Volume ($)</th></tr>
+                 <tr>
+                    <th className="px-8 py-4 cursor-pointer hover:bg-gray-100" onClick={() => handleMerchantSort('name')}>
+                        <div className="flex items-center">Merchant / Payee <SortIndicator keyName="name" currentKey={merchantSortKey} order={merchantSortOrder} /></div>
+                    </th>
+                    <th className="px-8 py-4 cursor-pointer hover:bg-gray-100" onClick={() => handleMerchantSort('category')}>
+                        <div className="flex items-center">Core Category <SortIndicator keyName="category" currentKey={merchantSortKey} order={merchantSortOrder} /></div>
+                    </th>
+                    <th className="px-8 py-4 text-center cursor-pointer hover:bg-gray-100" onClick={() => handleMerchantSort('count')}>
+                        <div className="flex items-center justify-center">Visit Count <SortIndicator keyName="count" currentKey={merchantSortKey} order={merchantSortOrder} /></div>
+                    </th>
+                    <th className="px-8 py-4 text-right cursor-pointer hover:bg-gray-100" onClick={() => handleMerchantSort('total')}>
+                        <div className="flex items-center justify-end">Volume ($) <SortIndicator keyName="total" currentKey={merchantSortKey} order={merchantSortOrder} /></div>
+                    </th>
+                 </tr>
                </thead>
                <tbody className="divide-y divide-gray-50">
                  {merchantStats.map((m) => (
@@ -266,7 +311,7 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
                      <td className="px-8 py-5 font-black text-gray-900 uppercase tracking-tight text-xs">{m.name}</td>
                      <td className="px-8 py-5"><span className="text-[9px] font-black px-2.5 py-1 bg-gray-100 rounded-lg text-gray-500 uppercase tracking-widest">{m.category}</span></td>
                      <td className="px-8 py-5 text-center text-xs font-bold text-gray-600">{m.count}</td>
-                     <td className="px-8 py-5 text-right font-black text-indigo-600">${m.total.toLocaleString()}</td>
+                     <td className="px-8 py-5 text-right font-black text-indigo-600">${m.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                    </tr>
                  ))}
                </tbody>
@@ -309,7 +354,7 @@ const MiniStat = ({ label, value, icon: Icon, color, isPerc }: any) => (
   <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 text-center">
     <div className={`w-10 h-10 mx-auto rounded-full bg-gray-50 flex items-center justify-center mb-3 ${color}`}><Icon size={18} /></div>
     <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">{label}</p>
-    <h4 className={`text-xl font-black ${color}`}>{isPerc ? `${value.toFixed(1)}%` : `$${value.toLocaleString(undefined, {maximumFractionDigits:0})}`}</h4>
+    <h4 className={`text-xl font-black ${color}`}>{isPerc ? `${value.toFixed(1)}%` : `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</h4>
   </div>
 );
 
@@ -325,7 +370,6 @@ const SummaryTable = ({ hierarchicalGrid }: { hierarchicalGrid: any }) => {
     setExpanded(next);
   };
 
-  // Fixed getMonthTotal to ensure it returns number and handles potential unknown types from Object.values on any
   const getMonthTotal = (monthIdx: number, type: TransactionType): number => {
     const cats = (hierarchicalGrid[type] || {}) as Record<string, any>;
     return (Object.values(cats) as any[]).reduce((sum: number, cat: any) => {
@@ -368,11 +412,11 @@ const SummaryTable = ({ hierarchicalGrid }: { hierarchicalGrid: any }) => {
               </td>
               {MONTH_NAMES.map((_, i) => (
                 <td key={i} className={`px-3 py-3 text-center text-[10px] font-bold ${node.months[i] ? 'text-gray-600' : 'text-gray-200'}`}>
-                  {node.months[i] ? `$${node.months[i].toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '-'}
+                  {node.months[i] ? `$${node.months[i].toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
                 </td>
               ))}
               <td className={`px-8 py-3 text-center font-black border-l bg-gray-50/10 text-xs ${colorClass}`}>
-                ${node.total.toLocaleString()}
+                ${node.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </td>
             </tr>
             {isExpanded && node.subCategories && renderDrilldownRows(node.subCategories, type, level + 1, id)}
@@ -384,7 +428,6 @@ const SummaryTable = ({ hierarchicalGrid }: { hierarchicalGrid: any }) => {
 
   return (
     <div className="space-y-10">
-      {/* 1. Cash Flow Summary Overview */}
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="px-8 py-5 border-b border-gray-50 flex items-center justify-between bg-gray-50/50">
           <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest">Cash Flow Analysis</h3>
@@ -402,21 +445,19 @@ const SummaryTable = ({ hierarchicalGrid }: { hierarchicalGrid: any }) => {
             <tbody className="divide-y divide-gray-50">
               <tr className="bg-white font-black text-emerald-600">
                 <td className="px-8 py-5 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)]">Net Income (+)</td>
-                {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-5 text-center">${getMonthTotal(i, TransactionType.INCOME).toLocaleString(undefined, {maximumFractionDigits:0})}</td>)}
-                {/* Fixed explicitly typing reduce to avoid unknown type errors */}
-                <td className="px-8 py-5 text-center border-l bg-gray-50/30">${((Object.values(hierarchicalGrid[TransactionType.INCOME] || {}) as any[]).reduce((s: number, c: any) => s + (Number(c.total) || 0), 0)).toLocaleString()}</td>
+                {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-5 text-center">${getMonthTotal(i, TransactionType.INCOME).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>)}
+                <td className="px-8 py-5 text-center border-l bg-gray-50/30">${((Object.values(hierarchicalGrid[TransactionType.INCOME] || {}) as any[]).reduce((s: number, c: any) => s + (Number(c.total) || 0), 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
               </tr>
               <tr className="bg-white font-black text-rose-500">
                 <td className="px-8 py-5 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)]">Total Expenses (-)</td>
-                {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-5 text-center">${getMonthTotal(i, TransactionType.EXPENSE).toLocaleString(undefined, {maximumFractionDigits:0})}</td>)}
-                {/* Fixed explicitly typing reduce to avoid unknown type errors */}
-                <td className="px-8 py-5 text-center border-l bg-gray-50/30">${((Object.values(hierarchicalGrid[TransactionType.EXPENSE] || {}) as any[]).reduce((s: number, c: any) => s + (Number(c.total) || 0), 0)).toLocaleString()}</td>
+                {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-5 text-center">${getMonthTotal(i, TransactionType.EXPENSE).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>)}
+                <td className="px-8 py-5 text-center border-l bg-gray-50/30">${((Object.values(hierarchicalGrid[TransactionType.EXPENSE] || {}) as any[]).reduce((s: number, c: any) => s + (Number(c.total) || 0), 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
               </tr>
               <tr className="bg-blue-50/40 font-black text-blue-800 border-t border-blue-100/50">
                 <td className="px-8 py-5 sticky left-0 bg-blue-50/40 backdrop-blur-sm">Monthly Net Surplus</td>
                 {MONTH_NAMES.map((_, i) => {
                   const net = getMonthTotal(i, TransactionType.INCOME) - getMonthTotal(i, TransactionType.EXPENSE);
-                  return <td key={i} className={`px-3 py-5 text-center ${net < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>${net.toLocaleString(undefined, {maximumFractionDigits:0})}</td>
+                  return <td key={i} className={`px-3 py-5 text-center ${net < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>${net.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 })}
                 <td className="px-8 py-5 text-center border-l bg-blue-50/20"></td>
               </tr>
@@ -425,7 +466,6 @@ const SummaryTable = ({ hierarchicalGrid }: { hierarchicalGrid: any }) => {
         </div>
       </div>
 
-      {/* 2. Detailed Drill-down Table for Income */}
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="px-8 py-5 border-b border-gray-50 flex items-center justify-between bg-emerald-50/30">
           <h3 className="text-sm font-black text-emerald-800 uppercase tracking-widest">Inbound Cash Drilldown</h3>
@@ -453,22 +493,18 @@ const SummaryTable = ({ hierarchicalGrid }: { hierarchicalGrid: any }) => {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
-                <th className="px-8 py-4 font-black text-[10px] text-gray-400 uppercase w-64 sticky left-0 bg-white z-10"></th>
+                <th className="px-8 py-4 font-black text-[10px] text-gray-400 uppercase w-64 sticky left-0 bg-white z-10">Hierarchy</th>
                 {MONTH_NAMES.map(m => <th key={m} className="px-3 py-4 font-black text-[10px] text-gray-400 text-center uppercase">{m}</th>)}
                 <th className="px-8 py-4 font-black text-[10px] text-emerald-700 text-center border-l bg-gray-50/50">Year Total</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {renderDrilldownRows(hierarchicalGrid[TransactionType.INCOME] || {}, TransactionType.INCOME)}
-              {Object.keys(hierarchicalGrid[TransactionType.INCOME] || {}).length === 0 && (
-                <tr><td colSpan={14} className="px-8 py-10 text-center text-gray-300 italic font-bold">No income recorded for this period</td></tr>
-              )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* 3. Detailed Drill-down Table for Expenses */}
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="px-8 py-5 border-b border-gray-50 flex items-center justify-between bg-rose-50/30">
           <h3 className="text-sm font-black text-rose-800 uppercase tracking-widest">Outbound Cash Drilldown</h3>
@@ -496,16 +532,13 @@ const SummaryTable = ({ hierarchicalGrid }: { hierarchicalGrid: any }) => {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
-                <th className="px-8 py-4 font-black text-[10px] text-gray-400 uppercase w-64 sticky left-0 bg-white z-10"></th>
+                <th className="px-8 py-4 font-black text-[10px] text-gray-400 uppercase w-64 sticky left-0 bg-white z-10">Hierarchy</th>
                 {MONTH_NAMES.map(m => <th key={m} className="px-3 py-4 font-black text-[10px] text-gray-400 text-center uppercase">{m}</th>)}
                 <th className="px-8 py-4 font-black text-[10px] text-rose-700 text-center border-l bg-gray-50/50">Year Total</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {renderDrilldownRows(hierarchicalGrid[TransactionType.EXPENSE] || {}, TransactionType.EXPENSE)}
-              {Object.keys(hierarchicalGrid[TransactionType.EXPENSE] || {}).length === 0 && (
-                <tr><td colSpan={14} className="px-8 py-10 text-center text-gray-300 italic font-bold">No expenses recorded for this period</td></tr>
-              )}
             </tbody>
           </table>
         </div>

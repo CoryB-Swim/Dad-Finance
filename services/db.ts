@@ -81,6 +81,16 @@ export const addTransaction = (db: IDBDatabase, t: Transaction) => add(db, STORE
 export const updateTransaction = (db: IDBDatabase, t: Transaction) => update(db, STORE_TRANSACTIONS, t);
 export const deleteTransaction = (db: IDBDatabase, id: number) => remove(db, STORE_TRANSACTIONS, id);
 
+export const deleteTransactions = (db: IDBDatabase, ids: number[]): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_TRANSACTIONS, 'readwrite');
+    const store = tx.objectStore(STORE_TRANSACTIONS);
+    ids.forEach(id => store.delete(id));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+};
+
 export const getAllCategories = (db: IDBDatabase) => getAll<Category>(db, STORE_CATEGORIES);
 export const addCategory = (db: IDBDatabase, c: Category) => add(db, STORE_CATEGORIES, c);
 export const updateCategory = (db: IDBDatabase, c: Category) => update(db, STORE_CATEGORIES, c);

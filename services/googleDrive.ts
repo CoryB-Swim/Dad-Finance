@@ -3,6 +3,7 @@ import { Transaction, Category, Merchant, PaymentMethod } from '../types';
 
 const SYNC_FILE_NAME = 'fintrack_sync.json';
 const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
+const DRIVE_ENABLED_KEY = 'fintrack_drive_enabled';
 
 // Note: In a production environment, this should be an environment variable
 const CLIENT_ID = '442466272870-qh25ebv950817d9dmljjdb3bkve90tf9.apps.googleusercontent.com';
@@ -17,11 +18,14 @@ export interface SyncData {
 
 let tokenClient: any = null;
 let accessToken: string | null = null;
+let onAuthSuccess: (() => void) | null = null;
 
 /**
  * Initializes the Google Identity Services client.
  */
-export const initGoogleAuth = (): Promise<void> => {
+export const initGoogleAuth = (onSuccess?: () => void): Promise<void> => {
+  if (onSuccess) onAuthSuccess = onSuccess;
+  
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined') return resolve();
     
@@ -36,6 +40,8 @@ export const initGoogleAuth = (): Promise<void> => {
               return;
             }
             accessToken = tokenResponse.access_token;
+            localStorage.setItem(DRIVE_ENABLED_KEY, 'true');
+            if (onAuthSuccess) onAuthSuccess();
           },
         });
         resolve();
@@ -51,10 +57,19 @@ export const initGoogleAuth = (): Promise<void> => {
 /**
  * Re-triggers the Google OAuth2 flow to obtain a fresh access token.
  */
-export const requestAccessToken = () => {
+export const requestAccessToken = (hint: 'none' | 'select_account' = 'select_account') => {
   if (tokenClient) {
-    tokenClient.requestAccessToken({ prompt: 'consent' });
+    // 'none' is often blocked by modern browsers for security unless 
+    // the user has a very recent active session, so we default to standard.
+    tokenClient.requestAccessToken({ prompt: hint === 'none' ? '' : 'select_account' });
   }
+};
+
+/**
+ * Checks if the user has previously enabled Drive sync.
+ */
+export const isDriveEnabledInStorage = () => {
+  return localStorage.getItem(DRIVE_ENABLED_KEY) === 'true';
 };
 
 /**

@@ -5,6 +5,15 @@ export enum TransactionType {
   BOTH = 'BOTH'
 }
 
+export type Frequency = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+export interface RecurrenceSchedule {
+  frequency: Frequency;
+  dayOfWeek?: number; // 0-6 (Sun-Sat)
+  dayOfMonth?: number; // 1-31
+  weekOfMonth?: number; // 1, 2, 3, 4, 5 (5 means last)
+}
+
 export interface Transaction {
   id?: number;
   amount: number;
@@ -27,6 +36,8 @@ export interface RecurringTemplate {
   paymentMethod?: string;
   description: string;
   type: TransactionType;
+  schedule?: RecurrenceSchedule;
+  lastPostedDate?: string;
 }
 
 export interface Category {
