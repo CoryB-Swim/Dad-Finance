@@ -29,7 +29,8 @@ import {
   Plus,
   AlertTriangle,
   Sparkles,
-  CheckCircle
+  CheckCircle,
+  ChevronDown
 } from 'lucide-react';
 import TransactionForm from './TransactionForm';
 
@@ -132,40 +133,71 @@ const TransactionList: React.FC<TransactionListProps> = ({
     setActiveFilters(activeFilters.filter(f => f !== val));
   };
 
-  const setDateRange = (range: 'today' | 'week' | 'month' | 'year' | 'lastYear') => {
+  const datePresets = useMemo(() => {
     const todayStr = getLocalDateString();
-    let start = '';
-    let end = todayStr;
+    const now = new Date();
+    
+    const day = now.getDay(); 
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1); 
+    const monday = new Date(new Date(now).setDate(diff));
+    
+    return {
+      today: { start: todayStr, end: todayStr },
+      week: { 
+        start: `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`,
+        end: todayStr 
+      },
+      month: {
+        start: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`,
+        end: todayStr
+      }
+    };
+  }, []);
 
-    switch (range) {
-      case 'today':
-        start = todayStr;
-        break;
-      case 'week':
-        const now = new Date();
-        const day = now.getDay(); 
-        const diff = now.getDate() - day + (day === 0 ? -6 : 1); 
-        const monday = new Date(now.setDate(diff));
-        start = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`;
-        break;
-      case 'month':
-        const mon = new Date();
-        start = `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, '0')}-01`;
-        break;
-      case 'year':
-        const yr = new Date();
-        start = `${yr.getFullYear()}-01-01`;
-        end = `${yr.getFullYear()}-12-31`;
-        break;
-      case 'lastYear':
-        const last = new Date().getFullYear() - 1;
-        start = `${last}-01-01`;
-        end = `${last}-12-31`;
-        break;
+  const toggleDateRange = (range: 'today' | 'week' | 'month') => {
+    const { start, end } = datePresets[range];
+    if (startDate === start && endDate === end) {
+      setStartDate('');
+      setEndDate('');
+    } else {
+      setStartDate(start);
+      setEndDate(end);
     }
-    setStartDate(start);
-    setEndDate(end);
   };
+
+  const availableYears = useMemo(() => {
+    const years = new Set<string>();
+    transactions.forEach(t => {
+      const y = t.date.split('-')[0];
+      if (y) years.add(y);
+    });
+    // Ensure current year is always an option
+    years.add(new Date().getFullYear().toString());
+    return Array.from(years).sort((a, b) => b.localeCompare(a));
+  }, [transactions]);
+
+  const handleYearChange = (year: string) => {
+    if (!year) {
+      setStartDate('');
+      setEndDate('');
+      return;
+    }
+    const newStart = `${year}-01-01`;
+    const newEnd = `${year}-12-31`;
+    
+    // Toggle year selection if already active
+    if (startDate === newStart && endDate === newEnd) {
+      setStartDate('');
+      setEndDate('');
+    } else {
+      setStartDate(newStart);
+      setEndDate(newEnd);
+    }
+  };
+
+  const currentSelectedYear = useMemo(() => {
+    return availableYears.find(year => startDate === `${year}-01-01` && endDate === `${year}-12-31`) || "";
+  }, [startDate, endDate, availableYears]);
 
   const autocompleteSuggestions = useMemo(() => {
     if (!inputValue.trim()) return [];
@@ -287,49 +319,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
     return sortConfig.direction === 'asc' ? <SortAsc size={10} className="ml-1 text-blue-600" /> : <SortDesc size={10} className="ml-1 text-blue-600" />;
   };
 
-  const InfoCard = ({ title, subTitle, stats, icon: Icon, colorClass, onClose, onQuickFilter }: any) => (
-    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        <div className={`relative h-24 ${colorClass} p-6`}>
-          <button onClick={onClose} className="absolute top-4 right-4 p-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white transition-colors">
-            <X size={18} />
-          </button>
-          <div className="absolute -bottom-6 left-6 w-16 h-16 bg-white rounded-2xl shadow-xl flex items-center justify-center border border-gray-100">
-            <Icon size={32} strokeWidth={2.5} className="text-gray-800" />
-          </div>
-        </div>
-        <div className="pt-10 px-6 pb-6">
-          <div className="mb-6">
-            <h3 className="text-2xl font-black text-gray-900 uppercase tracking-tight leading-tight">{title}</h3>
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">{subTitle}</p>
-          </div>
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            {stats.map((s: any, i: number) => (
-              <div key={i} className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1">{s.label}</p>
-                <h4 className="text-xl font-black text-gray-900">{s.value}</h4>
-              </div>
-            ))}
-          </div>
-          <div className="pt-4 border-t border-gray-100 flex gap-3">
-            <button 
-              onClick={onQuickFilter}
-              className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-blue-50 hover:bg-blue-700 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-            >
-              <Filter size={14} /> Filter History
-            </button>
-            <button 
-              onClick={onClose}
-              className="px-6 py-3 bg-gray-100 text-gray-500 rounded-xl font-black uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-all"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
   return (
     <div className="space-y-4 animate-in fade-in duration-500 pb-20">
       {/* Duplicate Detection Alert Banner */}
@@ -361,10 +350,10 @@ const TransactionList: React.FC<TransactionListProps> = ({
         </div>
       )}
 
-      {/* Viewing Transaction Modal - Refined width to max-w-md */}
+      {/* Viewing Transaction Modal */}
       {viewingTransaction && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[150] flex items-center justify-center p-4" onClick={() => setViewingTransaction(null)}>
-          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+          <div className="bg-white w-full max-md rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
             <div className={`p-6 flex items-center justify-between border-b border-gray-100 ${viewingTransaction.type === TransactionType.INCOME ? 'bg-emerald-50/50' : 'bg-rose-50/50'}`}>
               <div className="flex items-center gap-3">
                 <div className={`p-2 rounded-xl ${viewingTransaction.type === TransactionType.INCOME ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
@@ -397,11 +386,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
                 <div className="mt-2 flex items-center gap-2 text-gray-400 font-bold text-xs">
                   <Calendar size={14} /> {viewingTransaction.date}
                 </div>
-                {viewingTransaction.id && duplicateInfo.flaggedIds.has(viewingTransaction.id) && (
-                  <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-600 rounded-full border border-amber-100 text-[8px] font-black uppercase tracking-widest">
-                    <AlertTriangle size={10} /> Multiple entries match this record
-                  </div>
-                )}
               </div>
 
               <div className="grid grid-cols-2 gap-x-8 gap-y-6">
@@ -412,9 +396,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
                 <div>
                   <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><Tag size={10} className="text-emerald-500" /> Category</p>
                   <p className="text-sm font-black text-gray-900 uppercase tracking-tight">{viewingTransaction.category}</p>
-                  {viewingTransaction.subCategory && (
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">{viewingTransaction.subCategory}</p>
-                  )}
                 </div>
                 <div>
                   <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-1"><CreditCard size={10} className="text-rose-500" /> Payment</p>
@@ -531,32 +512,44 @@ const TransactionList: React.FC<TransactionListProps> = ({
                 <option value={TransactionType.INCOME}>Income only</option>
                 <option value={TransactionType.EXPENSE}>Expenses only</option>
               </select>
-              {duplicateInfo.deleteList.length > 0 && (
-                <button 
-                  onClick={() => setShowOnlyDuplicates(!showOnlyDuplicates)}
-                  className={`h-[46px] px-4 rounded-xl border transition-all flex items-center justify-center gap-2 ${showOnlyDuplicates ? 'bg-amber-600 border-amber-600 text-white' : 'bg-amber-50 border-amber-200 text-amber-600'}`}
-                >
-                  <Sparkles size={16} />
-                </button>
-              )}
             </div>
           </div>
 
           <div className="flex flex-col xl:flex-row gap-4 pt-1 border-t border-gray-50 mt-4">
             <div className="flex flex-wrap gap-2 items-center">
-              <PresetBtn label="Today" onClick={() => setDateRange('today')} active={startDate === endDate && startDate === getLocalDateString()} />
-              <PresetBtn label="This Week" onClick={() => setDateRange('week')} />
-              <PresetBtn label="This Month" onClick={() => setDateRange('month')} />
-              <PresetBtn label="This Year" onClick={() => setDateRange('year')} />
-              <PresetBtn label="Last Year" onClick={() => setDateRange('lastYear')} />
-              {(startDate || endDate) && (
-                <button 
-                  onClick={() => { setStartDate(''); setEndDate(''); }} 
-                  className="p-1.5 text-gray-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+              <PresetBtn 
+                label="Today" 
+                onClick={() => toggleDateRange('today')} 
+                active={startDate === datePresets.today.start && endDate === datePresets.today.end} 
+              />
+              <PresetBtn 
+                label="This Week" 
+                onClick={() => toggleDateRange('week')} 
+                active={startDate === datePresets.week.start && endDate === datePresets.week.end} 
+              />
+              <PresetBtn 
+                label="This Month" 
+                onClick={() => toggleDateRange('month')} 
+                active={startDate === datePresets.month.start && endDate === datePresets.month.end} 
+              />
+              
+              <div className="relative">
+                <select 
+                  value={currentSelectedYear}
+                  onChange={(e) => handleYearChange(e.target.value)}
+                  className={`appearance-none pl-3 pr-8 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all outline-none cursor-pointer border ${
+                    currentSelectedYear 
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-md' 
+                      : 'bg-white border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600'
+                  }`}
                 >
-                  <RotateCcw size={14} />
-                </button>
-              )}
+                  <option value="" className="text-gray-900 bg-white">Select Year</option>
+                  {availableYears.map(year => (
+                    <option key={year} value={year} className="text-gray-900 bg-white">{year}</option>
+                  ))}
+                </select>
+                <ChevronDown size={10} className={`absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none ${currentSelectedYear ? 'text-white' : 'text-gray-400'}`} />
+              </div>
             </div>
 
             <div className="flex items-center gap-2 bg-gray-50 p-1.5 rounded-xl border border-gray-200 flex-1 min-w-[300px]">
@@ -621,8 +614,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
                     <td className="px-6 py-3.5">
                       <div className="flex items-center gap-2">
                         <button onClick={(e) => { e.stopPropagation(); setSelectedCategoryForDetail(t.category); }} className="font-black text-gray-900 uppercase tracking-tight text-xs hover:text-blue-600">{t.category}</button>
-                        {isDuplicate && !isToBeDeleted && <span className="text-[7px] font-black text-amber-600 bg-amber-50 px-1 rounded border border-amber-100">Original</span>}
-                        {isToBeDeleted && <span className="text-[7px] font-black text-rose-500 bg-rose-50 px-1 rounded border border-rose-100">Copy</span>}
                       </div>
                     </td>
                     <td className="px-6 py-3.5">
@@ -703,7 +694,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
         </div>
       )}
 
-      {/* Transaction Add/Edit Modal - Refined to max-w-4xl */}
+      {/* Transaction Add/Edit Modal */}
       {(isAdding || editingTransaction) && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
@@ -734,10 +725,10 @@ const TransactionList: React.FC<TransactionListProps> = ({
         </div>
       )}
 
-      {/* Delete Record Confirmation - Corrected to max-w-sm */}
+      {/* Delete Record Confirmation */}
       {deletingTransaction && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-sm rounded-2xl p-6 text-center border border-gray-100 shadow-2xl">
+          <div className="bg-white w-full max-sm rounded-2xl p-6 text-center border border-gray-100 shadow-2xl">
             <AlertCircle size={40} className="mx-auto text-rose-500 mb-4" />
             <h3 className="text-xl font-black uppercase mb-2">Delete Record?</h3>
             <p className="text-sm text-gray-500 mb-6">This action cannot be undone.</p>
