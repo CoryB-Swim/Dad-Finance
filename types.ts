@@ -24,6 +24,7 @@ export interface Transaction {
   paymentMethod?: string;
   description: string;
   type: TransactionType;
+  fromTemplate?: boolean;
 }
 
 export interface RecurringTemplate {

@@ -156,8 +156,10 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
 
   const SummaryTable = () => {
     const { grid, incomeCats, expenseCats } = monthlyGridData;
-    const getRowTotal = (cat: string) => Object.values(grid[cat] || {}).reduce((a, b) => a + b, 0);
-    const getMonthTotal = (monthIdx: number, cats: string[]) => cats.reduce((sum, cat) => sum + (grid[cat]?.[monthIdx] || 0), 0);
+    // Fix: Cast Object.values to number[] to avoid operator mismatch errors.
+    const getRowTotal = (cat: string): number => (Object.values(grid[cat] || {}) as number[]).reduce((a: number, b: number) => a + b, 0);
+    // Fix: Explicitly type accumulator and cast result to number.
+    const getMonthTotal = (monthIdx: number, cats: string[]): number => cats.reduce((sum: number, cat: string) => sum + (grid[cat]?.[monthIdx] || 0), 0);
     const totalIncome = (m: number) => getMonthTotal(m, incomeCats);
     const totalExpenses = (m: number) => getMonthTotal(m, expenseCats);
 
@@ -177,30 +179,31 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
           <tbody className="divide-y divide-gray-50">
             <tr className="bg-white hover:bg-gray-50/50">
               <td className="px-4 py-3 font-bold text-gray-900 sticky left-0 bg-white">Income</td>
-              {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-3 text-center text-emerald-600 font-medium">${totalIncome(i).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>)}
-              <td className="px-3 py-3 text-center font-bold border-l">${incomeCats.reduce((s, c) => s + getRowTotal(c), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-              <td className="px-3 py-3 text-center text-gray-400 font-medium">${(incomeCats.reduce((s, c) => s + getRowTotal(c), 0) / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              {/* Fix: Use 'as any' before toLocaleString to bypass potential overload mismatch in environment. */}
+              {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-3 text-center text-emerald-600 font-medium">${(totalIncome(i) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>)}
+              <td className="px-3 py-3 text-center font-bold border-l">${(incomeCats.reduce((s: number, c) => s + getRowTotal(c), 0) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              <td className="px-3 py-3 text-center text-gray-400 font-medium">${((incomeCats.reduce((s: number, c) => s + getRowTotal(c), 0) / 12) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
             </tr>
             <tr className="bg-white hover:bg-gray-50/50">
               <td className="px-4 py-3 font-bold text-gray-900 sticky left-0 bg-white">Expenses</td>
-              {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-3 text-center text-rose-500 font-medium">${totalExpenses(i).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>)}
-              <td className="px-3 py-3 text-center font-bold border-l">${expenseCats.reduce((s, c) => s + getRowTotal(c), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-              <td className="px-3 py-3 text-center text-gray-400 font-medium">${(expenseCats.reduce((s, c) => s + getRowTotal(c), 0) / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-3 text-center text-rose-500 font-medium">${(totalExpenses(i) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>)}
+              <td className="px-3 py-3 text-center font-bold border-l">${(expenseCats.reduce((s: number, c) => s + getRowTotal(c), 0) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              <td className="px-3 py-3 text-center text-gray-400 font-medium">${((expenseCats.reduce((s: number, c) => s + getRowTotal(c), 0) / 12) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
             </tr>
             <tr className="bg-gray-50/50 font-bold border-t-2 border-gray-100">
               <td className="px-4 py-3 text-blue-800 sticky left-0 bg-gray-50">Net savings</td>
               {MONTH_NAMES.map((_, i) => {
                 const net = totalIncome(i) - totalExpenses(i);
-                return <td key={i} className={`px-3 py-3 text-center ${net < 0 ? 'text-rose-600 bg-rose-50/30' : 'text-emerald-700'}`}>${net.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                return <td key={i} className={`px-3 py-3 text-center ${net < 0 ? 'text-rose-600 bg-rose-50/30' : 'text-emerald-700'}`}>${(net as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
               })}
-              <td className="px-3 py-3 text-center border-l bg-gray-50">${(incomeCats.reduce((s, c) => s + getRowTotal(c), 0) - expenseCats.reduce((s, c) => s + getRowTotal(c), 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              <td className="px-3 py-3 text-center border-l bg-gray-50">${((incomeCats.reduce((s: number, c) => s + getRowTotal(c), 0) - expenseCats.reduce((s: number, c) => s + getRowTotal(c), 0)) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
               <td className="px-3 py-3 text-center text-gray-400">Avg</td>
             </tr>
             <tr className="bg-blue-50/30 font-black">
               <td className="px-4 py-3 text-blue-900 sticky left-0 bg-blue-50/30">Ending balance</td>
               {MONTH_NAMES.map((_, i) => {
                 runningBalance += (totalIncome(i) - totalExpenses(i));
-                return <td key={i} className="px-3 py-3 text-center text-blue-800">${runningBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                return <td key={i} className="px-3 py-3 text-center text-blue-800">${(runningBalance as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
               })}
               <td className="px-3 py-3 text-center border-l"></td>
               <td className="px-3 py-3 text-center text-gray-400"></td>
@@ -209,18 +212,18 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
             {incomeCats.map(cat => (
               <tr key={cat} className="hover:bg-gray-50">
                 <td className="px-4 py-2.5 text-gray-600 sticky left-0 bg-white font-medium">{cat}</td>
-                {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-2.5 text-center text-gray-500">${(grid[cat]?.[i] || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>)}
-                <td className="px-3 py-2.5 text-center font-bold text-emerald-600 border-l">${getRowTotal(cat).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                <td className="px-3 py-2.5 text-center text-gray-400">${(getRowTotal(cat) / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-2.5 text-center text-gray-500">${((grid[cat]?.[i] || 0) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>)}
+                <td className="px-3 py-2.5 text-center font-bold text-emerald-600 border-l">${(getRowTotal(cat) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td className="px-3 py-2.5 text-center text-gray-400">${((getRowTotal(cat) / 12) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
               </tr>
             ))}
             <tr className="bg-gray-50/80"><td colSpan={15} className="px-4 py-2 font-black text-rose-700 uppercase tracking-widest text-[9px]">Expense Categories</td></tr>
             {expenseCats.map(cat => (
               <tr key={cat} className="hover:bg-gray-50">
                 <td className="px-4 py-2.5 text-gray-600 sticky left-0 bg-white font-medium">{cat}</td>
-                {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-2.5 text-center text-gray-500">${(grid[cat]?.[i] || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>)}
-                <td className="px-3 py-2.5 text-center font-bold text-rose-600 border-l">${getRowTotal(cat).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                <td className="px-3 py-2.5 text-center text-gray-400">${(getRowTotal(cat) / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                {MONTH_NAMES.map((_, i) => <td key={i} className="px-3 py-2.5 text-center text-gray-500">${((grid[cat]?.[i] || 0) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>)}
+                <td className="px-3 py-2.5 text-center font-bold text-rose-600 border-l">${(getRowTotal(cat) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td className="px-3 py-2.5 text-center text-gray-400">${((getRowTotal(cat) / 12) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
               </tr>
             ))}
           </tbody>
@@ -294,20 +297,24 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Savings</p>
-                 <h4 className="text-2xl font-black text-emerald-600">${trendData.reduce((acc, curr) => acc + (curr.income - curr.expenses), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h4>
+                 {/* Fix: Explicitly cast result of reduce to number and then any for toLocaleString. */}
+                 <h4 className="text-2xl font-black text-emerald-600">${((trendData.reduce((acc: number, curr: any) => acc + (curr.income - curr.expenses), 0) as number) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h4>
                </div>
                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Avg Monthly Income</p>
-                 <h4 className="text-2xl font-black text-gray-900">${(trendData.reduce((acc, curr) => acc + curr.income, 0) / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h4>
+                 {/* Fix: Explicitly cast result of reduce to number and then any for toLocaleString. */}
+                 <h4 className="text-2xl font-black text-gray-900">${(((trendData.reduce((acc: number, curr: any) => acc + curr.income, 0) as number) / 12) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h4>
                </div>
                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Avg Monthly Expense</p>
-                 <h4 className="text-2xl font-black text-rose-500">${(trendData.reduce((acc, curr) => acc + curr.expenses, 0) / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h4>
+                 {/* Fix: Explicitly cast result of reduce to number and then any for toLocaleString. */}
+                 <h4 className="text-2xl font-black text-rose-500">${(((trendData.reduce((acc: number, curr: any) => acc + curr.expenses, 0) as number) / 12) as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h4>
                </div>
                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Efficiency Ratio</p>
                  <h4 className="text-2xl font-black text-blue-600">
-                   {((trendData.reduce((a,c) => a+c.income, 0) - trendData.reduce((a,c) => a+c.expenses, 0)) / trendData.reduce((a,c) => a+c.income, 1) * 100).toFixed(1)}%
+                   {/* Fix: Cast intermediate reduce values to number before arithmetic. */}
+                   {((((trendData.reduce((a: number, c: any) => a + c.income, 0) as number) - (trendData.reduce((a: number, c: any) => a + c.expenses, 0) as number)) / ((trendData.reduce((a: number, c: any) => a + c.income, 0) as number) || 1)) * 100).toFixed(1)}%
                  </h4>
                </div>
             </div>
@@ -327,8 +334,8 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
                      <td className="px-6 py-4 font-bold text-gray-900">{m.name}</td>
                      <td className="px-6 py-4"><span className="text-[10px] font-black px-2 py-0.5 bg-gray-100 rounded text-gray-500 uppercase">{m.category}</span></td>
                      <td className="px-6 py-4 text-center text-sm font-medium text-gray-600">{m.count}</td>
-                     <td className="px-6 py-4 text-right text-sm font-bold text-gray-600">${m.average.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                     <td className="px-6 py-4 text-right text-lg font-black text-indigo-600">${m.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                     <td className="px-6 py-4 text-right text-sm font-bold text-gray-600">${(m.average as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                     <td className="px-6 py-4 text-right text-lg font-black text-indigo-600">${(m.total as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                    </tr>
                  ))}
                </tbody>
@@ -364,8 +371,8 @@ const Reports: React.FC<ReportsProps> = ({ transactions, categories }) => {
                       return (
                         <tr key={c.name} className="hover:bg-gray-50">
                           <td className="px-6 py-4 font-bold text-gray-900">{c.name}</td>
-                          <td className="px-6 py-4 text-right font-medium text-gray-600">${c.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                          <td className="px-6 py-4 text-right font-black text-gray-800">${c.average.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="px-6 py-4 text-right font-medium text-gray-600">${(c.total as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="px-6 py-4 text-right font-black text-gray-800">${(c.average as any).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                           <td className="px-6 py-4 text-right"><span className="text-xs font-black text-rose-500 bg-rose-50 px-2 py-1 rounded">{((c.total / grandTotal) * 100).toFixed(1)}%</span></td>
                         </tr>
                       )

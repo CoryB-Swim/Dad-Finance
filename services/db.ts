@@ -127,13 +127,14 @@ export const clearAllData = (db: IDBDatabase): Promise<void> => {
 export const importAllData = async (db: IDBDatabase, data: any): Promise<void> => {
   await clearAllData(db);
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([STORE_TRANSACTIONS, STORE_CATEGORIES, STORE_MERCHANTS, STORE_PAYMENT_METHODS], 'readwrite');
+    const tx = db.transaction([STORE_TRANSACTIONS, STORE_CATEGORIES, STORE_MERCHANTS, STORE_PAYMENT_METHODS, STORE_TEMPLATES], 'readwrite');
     
     // We use .put() instead of .add() to ensure IDs are respected during restoration
     if (data.transactions) data.transactions.forEach((t: any) => tx.objectStore(STORE_TRANSACTIONS).put(t));
     if (data.categories) data.categories.forEach((c: any) => tx.objectStore(STORE_CATEGORIES).put(c));
     if (data.merchants) data.merchants.forEach((m: any) => tx.objectStore(STORE_MERCHANTS).put(m));
     if (data.paymentMethods) data.paymentMethods.forEach((p: any) => tx.objectStore(STORE_PAYMENT_METHODS).put(p));
+    if (data.templates) data.templates.forEach((tmp: any) => tx.objectStore(STORE_TEMPLATES).put(tmp));
     
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);

@@ -24,7 +24,6 @@ import {
 } from 'lucide-react';
 import TransactionForm from './TransactionForm';
 
-// Define the missing TemplateSortKey type
 type TemplateSortKey = 'name' | 'amount' | 'category' | 'schedule' | 'nextDate' | 'status';
 
 interface TemplatesProps {
@@ -56,9 +55,6 @@ const getHumanSchedule = (tmp: RecurringTemplate) => {
   return s.frequency;
 };
 
-/**
- * Calculates the next occurrence date based on the schedule and last posted date.
- */
 const calculateNextDate = (tmp: RecurringTemplate): string | null => {
   if (!tmp.schedule || tmp.schedule.frequency === 'none') return null;
 
@@ -248,10 +244,10 @@ const Templates: React.FC<TemplatesProps> = ({
         </div>
       </div>
 
-      {/* Viewing Template Modal */}
+      {/* Viewing Template Modal - Standardized max-w-md */}
       {viewingTemplate && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[150] flex items-center justify-center p-4" onClick={() => setViewingTemplate(null)}>
-          <div className="bg-white w-full max-lg rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
             <div className={`p-6 flex items-center justify-between border-b border-gray-100 ${viewingTemplate.type === TransactionType.INCOME ? 'bg-emerald-50/50' : 'bg-rose-50/50'}`}>
               <div className="flex items-center gap-3">
                 <div className={`p-2 rounded-xl ${viewingTemplate.type === TransactionType.INCOME ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
@@ -341,9 +337,10 @@ const Templates: React.FC<TemplatesProps> = ({
         </div>
       )}
 
+      {/* Delete Confirmation Modal - Standardized max-w-sm */}
       {deletingTemplate && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-sm rounded-2xl p-6 text-center border border-gray-100 shadow-2xl">
+          <div className="bg-white w-full max-w-sm rounded-2xl p-6 text-center border border-gray-100 shadow-2xl">
             <AlertCircle size={40} className="mx-auto text-rose-500 mb-4" />
             <h3 className="text-xl font-black uppercase mb-2">Delete Pattern?</h3>
             <p className="text-sm text-gray-500 mb-6">Recurring transactions will no longer be tracked.</p>
@@ -355,9 +352,10 @@ const Templates: React.FC<TemplatesProps> = ({
         </div>
       )}
 
+      {/* Pattern Entry Form Modal - Standardized max-w-3xl for balanced confinement */}
       {(editingTemplate || isCreating) && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+          <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
               <h3 className="font-black text-gray-800 uppercase tracking-tight text-[10px]">{isCreating ? 'Create New Pattern' : 'Edit Pattern'}</h3>
               <button onClick={() => { setEditingTemplate(null); setIsCreating(false); }} className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-full"><X size={18} /></button>

@@ -100,9 +100,24 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
     setDate(getLocalDateString());
   };
 
+  const sortedCategories = useMemo(() => 
+    [...categories].sort((a, b) => a.name.localeCompare(b.name)),
+    [categories]
+  );
+
+  const sortedMerchants = useMemo(() => 
+    [...merchants].sort((a, b) => a.name.localeCompare(b.name)),
+    [merchants]
+  );
+
+  const sortedPaymentMethods = useMemo(() => 
+    [...paymentMethods].sort((a, b) => a.name.localeCompare(b.name)),
+    [paymentMethods]
+  );
+
   const currentCategorySubs = useMemo(() => {
     const cat = categories.find(c => c.name.toLowerCase() === category.toLowerCase().trim());
-    return cat?.subCategories || [];
+    return [...(cat?.subCategories || [])].sort((a, b) => a.localeCompare(b));
   }, [category, categories]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -199,7 +214,7 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
             <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider ml-1">Amount</label>
             <div className="relative h-11">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
-              <input type="number" step="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full h-full pl-8 pr-4 bg-gray-50 border border-gray-200 rounded-xl text-md font-black focus:ring-4 focus:ring-blue-100 outline-none transition-all placeholder-0.00" />
+              <input type="number" step="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full h-full pl-8 pr-4 bg-gray-50 border border-gray-200 rounded-xl text-md font-black text-gray-900 focus:ring-4 focus:ring-blue-100 outline-none transition-all placeholder-0.00" />
             </div>
           </div>
           {!isTemplateMode && (
@@ -207,7 +222,7 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
               <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider ml-1">Date</label>
               <div className="relative h-11" onClick={() => dateInputRef.current?.showPicker()}>
                 <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"><Calendar size={16} /></div>
-                <input ref={dateInputRef} type="date" required value={date} onChange={(e) => setDate(e.target.value)} className="w-full h-full pl-10 pr-4 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold focus:ring-4 focus:ring-blue-100 outline-none transition-all cursor-pointer" />
+                <input ref={dateInputRef} type="date" required value={date} onChange={(e) => setDate(e.target.value)} className="w-full h-full pl-10 pr-4 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900 focus:ring-4 focus:ring-blue-100 outline-none transition-all cursor-pointer" />
               </div>
             </div>
           )}
@@ -223,7 +238,7 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="space-y-1">
               <label className="block text-[9px] font-black text-indigo-400 uppercase tracking-wider ml-1">Frequency</label>
-              <select value={freq} onChange={(e) => setFreq(e.target.value as Frequency)} className="w-full h-10 px-3 bg-white border border-indigo-100 rounded-xl text-xs font-black uppercase tracking-tight focus:ring-4 focus:ring-indigo-100 outline-none appearance-none cursor-pointer">
+              <select value={freq} onChange={(e) => setFreq(e.target.value as Frequency)} className="w-full h-10 px-3 bg-white border border-indigo-100 rounded-xl text-xs font-black uppercase tracking-tight text-gray-900 focus:ring-4 focus:ring-indigo-100 outline-none appearance-none cursor-pointer">
                 <option value="none">Manual Only</option>
                 <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
@@ -235,7 +250,7 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
             {freq === 'weekly' && (
               <div className="space-y-1">
                 <label className="block text-[9px] font-black text-indigo-400 uppercase tracking-wider ml-1">Weekday</label>
-                <select value={dayOfWeek} onChange={(e) => setDayOfWeek(parseInt(e.target.value))} className="w-full h-10 px-3 bg-white border border-indigo-100 rounded-xl text-xs font-bold focus:ring-4 focus:ring-indigo-100 outline-none appearance-none cursor-pointer">
+                <select value={dayOfWeek} onChange={(e) => setDayOfWeek(parseInt(e.target.value))} className="w-full h-10 px-3 bg-white border border-indigo-100 rounded-xl text-xs font-bold text-gray-900 focus:ring-4 focus:ring-indigo-100 outline-none appearance-none cursor-pointer">
                   {DAYS_OF_WEEK.map((d, i) => <option key={i} value={i}>{d}</option>)}
                 </select>
               </div>
@@ -253,13 +268,13 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
                 {monthlyMode === 'date' ? (
                   <div className="space-y-1">
                     <label className="block text-[9px] font-black text-indigo-400 uppercase tracking-wider ml-1">Day #</label>
-                    <input type="number" min="1" max="31" value={dayOfMonth} onChange={(e) => setDayOfMonth(parseInt(e.target.value))} className="w-full h-10 px-3 bg-white border border-indigo-100 rounded-xl text-xs font-black focus:ring-4 focus:ring-indigo-100 outline-none" />
+                    <input type="number" min="1" max="31" value={dayOfMonth} onChange={(e) => setDayOfMonth(parseInt(e.target.value))} className="w-full h-10 px-3 bg-white border border-indigo-100 rounded-xl text-xs font-black text-gray-900 focus:ring-4 focus:ring-indigo-100 outline-none" />
                   </div>
                 ) : (
                   <>
                     <div className="space-y-1">
                       <label className="block text-[9px] font-black text-indigo-400 uppercase tracking-wider ml-1">Week</label>
-                      <select value={weekOfMonth} onChange={(e) => setWeekOfMonth(parseInt(e.target.value))} className="w-full h-10 px-3 bg-white border border-indigo-100 rounded-xl text-xs font-bold focus:ring-4 focus:ring-indigo-100 outline-none">
+                      <select value={weekOfMonth} onChange={(e) => setWeekOfMonth(parseInt(e.target.value))} className="w-full h-10 px-3 bg-white border border-indigo-100 rounded-xl text-xs font-bold text-gray-900 focus:ring-4 focus:ring-indigo-100 outline-none">
                         {WEEKS_OF_MONTH.map(w => <option key={w.val} value={w.val}>{w.label}</option>)}
                       </select>
                     </div>
@@ -290,15 +305,15 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
             <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider ml-1">Category</label>
             <div className="relative">
               <Tag size={12} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300" />
-              <input type="text" list="cat-suggestions" required value={category} onChange={(e) => setCategory(e.target.value)} className="w-full h-11 pl-9 pr-4 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold focus:ring-4 focus:ring-blue-100 outline-none" placeholder="Required..." />
+              <input type="text" list="cat-suggestions" required value={category} onChange={(e) => setCategory(e.target.value)} className="w-full h-11 pl-9 pr-4 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900 focus:ring-4 focus:ring-blue-100 outline-none" placeholder="Required..." />
             </div>
-            <datalist id="cat-suggestions">{categories.map(c => <option key={c.id} value={c.name} />)}</datalist>
+            <datalist id="cat-suggestions">{sortedCategories.map(c => <option key={c.id} value={c.name} />)}</datalist>
           </div>
           <div className="space-y-1">
             <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider ml-1">Sub-Category</label>
             <div className="relative">
               <Layers size={12} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300" />
-              <input type="text" list="sub-cat-suggestions" value={subCategory} onChange={(e) => setSubCategory(e.target.value)} className="w-full h-11 pl-9 pr-4 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold focus:ring-4 focus:ring-blue-100 outline-none" placeholder="Optional..." />
+              <input type="text" list="sub-cat-suggestions" value={subCategory} onChange={(e) => setSubCategory(e.target.value)} className="w-full h-11 pl-9 pr-4 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900 focus:ring-4 focus:ring-blue-100 outline-none" placeholder="Optional..." />
             </div>
             <datalist id="sub-cat-suggestions">{currentCategorySubs.map((s, idx) => <option key={idx} value={s} />)}</datalist>
           </div>
@@ -306,17 +321,17 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
             <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider ml-1">Payee / Merchant</label>
             <div className="relative">
               <Store size={12} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300" />
-              <input type="text" list="merch-suggestions" value={merchant} onChange={(e) => setMerchant(e.target.value)} className="w-full h-11 pl-9 pr-4 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold focus:ring-4 focus:ring-blue-100 outline-none" placeholder="Optional..." />
+              <input type="text" list="merch-suggestions" value={merchant} onChange={(e) => setMerchant(e.target.value)} className="w-full h-11 pl-9 pr-4 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900 focus:ring-4 focus:ring-blue-100 outline-none" placeholder="Optional..." />
             </div>
-            <datalist id="merch-suggestions">{merchants.map(m => <option key={m.id} value={m.name} />)}</datalist>
+            <datalist id="merch-suggestions">{sortedMerchants.map(m => <option key={m.id} value={m.name} />)}</datalist>
           </div>
           <div className="space-y-1">
             <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider ml-1">Payment Method</label>
             <div className="relative">
               <CreditCard size={12} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-300" />
-              <input type="text" list="pay-suggestions" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className="w-full h-11 pl-9 pr-4 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold focus:ring-4 focus:ring-blue-100 outline-none" placeholder="Optional..." />
+              <input type="text" list="pay-suggestions" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className="w-full h-11 pl-9 pr-4 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900 focus:ring-4 focus:ring-blue-100 outline-none" placeholder="Optional..." />
             </div>
-            <datalist id="pay-suggestions">{paymentMethods.map(p => <option key={p.id} value={p.name} />)}</datalist>
+            <datalist id="pay-suggestions">{sortedPaymentMethods.map(p => <option key={p.id} value={p.name} />)}</datalist>
           </div>
         </div>
       </section>
@@ -326,7 +341,7 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
           <div className="p-1 bg-gray-100 rounded text-gray-600"><FileText size={14} /></div>
           <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Additional Notes</h4>
         </div>
-        <textarea value={description} onChange={(e) => setDescription(e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-semibold focus:ring-4 focus:ring-blue-100 outline-none min-h-[80px]" placeholder="Brief context for this entry..." />
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-semibold text-gray-900 focus:ring-4 focus:ring-blue-100 outline-none min-h-[80px]" placeholder="Brief context for this entry..." />
       </section>
 
       <div className="flex items-center gap-3 pt-4">

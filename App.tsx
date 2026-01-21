@@ -79,7 +79,7 @@ const App: React.FC = () => {
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [isDriveConnected, setIsDriveConnected] = useState(false);
   
-  const [initialListFilter, setInitialListFilter] = useState<string | null>(null);
+  const [initialListFilter, setInitialListFilter] = useState<{ value: string, type: any } | null>(null);
   const [targetMerchantName, setTargetMerchantName] = useState<string | null>(null);
 
   const legacyFileInputRef = useRef<HTMLInputElement>(null);
@@ -137,11 +137,12 @@ const App: React.FC = () => {
       }
 
       if (shouldPush) {
-        const [txs, cats, vends, pmeths] = await Promise.all([
+        const [txs, cats, vends, pmeths, tmps] = await Promise.all([
           getAllTransactions(database),
           getAllCategories(database),
           getAllMerchants(database),
-          getAllPaymentMethods(database)
+          getAllPaymentMethods(database),
+          getAllTemplates(database)
         ]);
 
         const currentTimestamp = new Date().toISOString();
@@ -150,6 +151,7 @@ const App: React.FC = () => {
           categories: cats,
           merchants: vends,
           paymentMethods: pmeths,
+          templates: tmps,
           lastUpdated: currentTimestamp
         } as any);
         
@@ -227,7 +229,7 @@ const App: React.FC = () => {
   const handleExportData = async () => {
     if (!db) return;
     try {
-      const data = { transactions, categories, merchants, paymentMethods, exportDate: new Date().toISOString() };
+      const data = { transactions, categories, merchants, paymentMethods, templates, exportDate: new Date().toISOString() };
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -588,7 +590,8 @@ const App: React.FC = () => {
       merchant: tmp.merchant || 'Undefined',
       paymentMethod: tmp.paymentMethod,
       description: tmp.description,
-      type: tmp.type
+      type: tmp.type,
+      fromTemplate: true
     };
     
     await addTransaction(db, tx);
@@ -710,7 +713,7 @@ const App: React.FC = () => {
               onExport={handleExportData}
               onImport={handleImportData}
               onViewMerchantTransactions={(name) => {
-                setInitialListFilter(name);
+                setInitialListFilter({ value: name, type: 'merchant' });
                 setActiveView('list');
               }}
               targetMerchantName={targetMerchantName}

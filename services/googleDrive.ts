@@ -1,5 +1,5 @@
 
-import { Transaction, Category, Merchant, PaymentMethod } from '../types';
+import { Transaction, Category, Merchant, PaymentMethod, RecurringTemplate } from '../types';
 
 const SYNC_FILE_NAME = 'fintrack_sync.json';
 const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
@@ -13,6 +13,7 @@ export interface SyncData {
   categories: Category[];
   merchants: Merchant[];
   paymentMethods: PaymentMethod[];
+  templates: RecurringTemplate[];
   lastUpdated: string;
 }
 

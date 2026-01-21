@@ -48,7 +48,7 @@ interface TransactionListProps {
   onAddMerchant: (m: Merchant) => void;
   onAddPaymentMethod: (p: PaymentMethod) => void;
   onSaveAsTemplate: (t: Transaction) => void;
-  initialFilter?: string | null;
+  initialFilter?: { value: string, type: FilterScope } | null;
   onClearInitialFilter?: () => void;
   onViewMerchantDetail?: (name: string) => void;
 }
@@ -59,6 +59,12 @@ const getLocalDateString = () => {
 };
 
 type SortKey = 'date' | 'amount' | 'category' | 'subCategory' | 'merchant' | 'paymentMethod' | 'description';
+type FilterScope = 'category' | 'sub' | 'merchant' | 'payment' | 'keyword';
+
+interface FilterPill {
+  value: string;
+  type: FilterScope;
+}
 
 const TransactionList: React.FC<TransactionListProps> = ({ 
   transactions, 
@@ -78,7 +84,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
   onClearInitialFilter,
   onViewMerchantDetail
 }) => {
-  const [activeFilters, setActiveFilters] = useState<string[]>([]);
+  const [activeFilters, setActiveFilters] = useState<FilterPill[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [typeFilter, setTypeFilter] = useState<TransactionType | 'ALL'>('ALL');
@@ -94,11 +100,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
   
   const [showOnlyDuplicates, setShowOnlyDuplicates] = useState(false);
   
-  const [selectedMerchantForDetail, setSelectedMerchantForDetail] = useState<string | null>(null);
-  const [selectedCategoryForDetail, setSelectedCategoryForDetail] = useState<string | null>(null);
-  const [selectedSubCategoryForDetail, setSelectedSubCategoryForDetail] = useState<{cat: string, sub: string} | null>(null);
-  const [selectedPaymentForDetail, setSelectedPaymentForDetail] = useState<string | null>(null);
-  
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -113,24 +114,36 @@ const TransactionList: React.FC<TransactionListProps> = ({
 
   useEffect(() => {
     if (initialFilter) {
-      if (!activeFilters.includes(initialFilter)) {
-        setActiveFilters([initialFilter]);
+      const { value, type } = initialFilter;
+      if (!activeFilters.some(f => f.value === value && f.type === type)) {
+        setActiveFilters([...activeFilters, { value, type }]);
       }
       onClearInitialFilter?.();
     }
   }, [initialFilter, activeFilters, onClearInitialFilter]);
 
-  const addFilter = (val: string) => {
+  const addFilter = (val: string, scope: FilterScope = 'keyword') => {
     const clean = val.trim();
-    if (clean && !activeFilters.includes(clean)) {
-      setActiveFilters([...activeFilters, clean]);
+    if (clean && !activeFilters.some(f => f.value === clean && f.type === scope)) {
+      setActiveFilters([...activeFilters, { value: clean, type: scope }]);
     }
     setInputValue('');
     setShowSuggestions(false);
   };
 
-  const removeFilter = (val: string) => {
-    setActiveFilters(activeFilters.filter(f => f !== val));
+  const removeFilter = (val: string, scope: FilterScope) => {
+    setActiveFilters(activeFilters.filter(f => !(f.value === val && f.type === scope)));
+  };
+
+  const getScopeLabel = (scope: FilterScope) => {
+    switch (scope) {
+      case 'category': return 'Categories';
+      case 'merchant': return 'Merchants';
+      case 'payment': return 'Payment Methods';
+      case 'sub': return 'Sub-Categories';
+      case 'keyword': return 'Notes';
+      default: return '';
+    }
   };
 
   const datePresets = useMemo(() => {
@@ -171,7 +184,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
       const y = t.date.split('-')[0];
       if (y) years.add(y);
     });
-    // Ensure current year is always an option
     years.add(new Date().getFullYear().toString());
     return Array.from(years).sort((a, b) => b.localeCompare(a));
   }, [transactions]);
@@ -184,8 +196,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
     }
     const newStart = `${year}-01-01`;
     const newEnd = `${year}-12-31`;
-    
-    // Toggle year selection if already active
     if (startDate === newStart && endDate === newEnd) {
       setStartDate('');
       setEndDate('');
@@ -202,83 +212,82 @@ const TransactionList: React.FC<TransactionListProps> = ({
   const autocompleteSuggestions = useMemo(() => {
     if (!inputValue.trim()) return [];
     const query = inputValue.toLowerCase().trim();
-    const suggestions: { label: string; type: 'category' | 'sub' | 'merchant' | 'payment' }[] = [];
+    
+    const groups: { type: FilterScope; items: string[] }[] = [
+      { type: 'category', items: [] },
+      { type: 'sub', items: [] },
+      { type: 'merchant', items: [] },
+      { type: 'payment', items: [] }
+    ];
 
     categories.forEach(c => {
-      if (c.name.toLowerCase().includes(query)) suggestions.push({ label: c.name, type: 'category' });
+      if (c.name.toLowerCase().includes(query)) groups[0].items.push(c.name);
       c.subCategories?.forEach(s => {
-        if (s.toLowerCase().includes(query)) suggestions.push({ label: s, type: 'sub' });
+        if (s.toLowerCase().includes(query)) groups[1].items.push(s);
       });
     });
 
     merchants.forEach(m => {
-      if (m.name.toLowerCase().includes(query)) suggestions.push({ label: m.name, type: 'merchant' });
+      if (m.name.toLowerCase().includes(query)) groups[2].items.push(m.name);
     });
 
     paymentMethods.forEach(p => {
-      if (p.name.toLowerCase().includes(query)) suggestions.push({ label: p.name, type: 'payment' });
+      if (p.name.toLowerCase().includes(query)) groups[3].items.push(p.name);
     });
 
-    const unique = suggestions.filter((v, i, a) => 
-      a.findIndex(t => t.label === v.label) === i && !activeFilters.includes(v.label)
-    );
-    
-    return unique.slice(0, 10);
+    return groups.map(group => ({
+      ...group,
+      items: Array.from(new Set(group.items))
+        .filter(item => !activeFilters.some(f => f.value === item && f.type === group.type))
+        .slice(0, 8)
+    })).filter(group => group.items.length > 0);
   }, [inputValue, categories, merchants, paymentMethods, activeFilters]);
 
-  // DUPLICATE DETECTION LOGIC
   const duplicateInfo = useMemo(() => {
     const groups: Record<string, Transaction[]> = {};
     transactions.forEach(t => {
-      // Create a fingerprint of the transaction
-      const fingerprint = `${t.date}|${t.amount}|${t.merchant || 'None'}|${t.category}|${t.type}`;
+      // Fingerprint now includes all relevant transaction data to strictly identify exact duplicates
+      // including Notes (description), subCategory, and paymentMethod as requested.
+      const fingerprint = `${t.date}|${t.amount}|${t.merchant || ''}|${t.category}|${t.subCategory || ''}|${t.type}|${t.paymentMethod || ''}|${t.description || ''}`;
       if (!groups[fingerprint]) groups[fingerprint] = [];
       groups[fingerprint].push(t);
     });
 
     const duplicateIds = new Set<number>();
     const allFlaggedIds = new Set<number>();
-    
     Object.values(groups).forEach(group => {
       if (group.length > 1) {
-        // Sort by ID to keep the oldest one
         const sorted = [...group].sort((a, b) => (a.id || 0) - (b.id || 0));
         sorted.forEach((item, idx) => {
           if (item.id) {
             allFlaggedIds.add(item.id);
-            if (idx > 0) duplicateIds.add(item.id); // Add to delete list (all except first)
+            if (idx > 0) duplicateIds.add(item.id);
           }
         });
       }
     });
-
-    return { 
-      deleteList: Array.from(duplicateIds), 
-      flaggedIds: allFlaggedIds, // All IDs that are part of a duplicate pair
-      totalPairs: Object.values(groups).filter(g => g.length > 1).length
-    };
+    return { deleteList: Array.from(duplicateIds), flaggedIds: allFlaggedIds, totalPairs: Object.values(groups).filter(g => g.length > 1).length };
   }, [transactions]);
 
   const filteredTransactions = useMemo(() => {
     let result = transactions.filter(t => {
       const matchesPills = activeFilters.length === 0 || activeFilters.every(filter => {
-        const f = filter.toLowerCase();
-        return t.category.toLowerCase().includes(f) || 
-               (t.subCategory || '').toLowerCase().includes(f) || 
-               (t.merchant || '').toLowerCase().includes(f) || 
-               (t.paymentMethod || '').toLowerCase().includes(f) || 
-               (t.description || '').toLowerCase().includes(f);
+        const f = filter.value.toLowerCase();
+        switch (filter.type) {
+          case 'category': return t.category.toLowerCase().includes(f);
+          case 'sub': return (t.subCategory || '').toLowerCase().includes(f);
+          case 'merchant': return (t.merchant || '').toLowerCase().includes(f);
+          case 'payment': return (t.paymentMethod || '').toLowerCase().includes(f);
+          case 'keyword': return (t.description || '').toLowerCase().includes(f);
+          default: return false;
+        }
       });
 
       const matchesType = typeFilter === 'ALL' || t.type === typeFilter;
       const matchesStartDate = !startDate || t.date >= startDate;
       const matchesEndDate = !endDate || t.date <= endDate;
-      
       let matchesDuplicates = true;
-      if (showOnlyDuplicates && t.id) {
-        matchesDuplicates = duplicateInfo.flaggedIds.has(t.id);
-      }
-
+      if (showOnlyDuplicates && t.id) matchesDuplicates = duplicateInfo.flaggedIds.has(t.id);
       return matchesPills && matchesType && matchesStartDate && matchesEndDate && matchesDuplicates;
     });
 
@@ -321,7 +330,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
 
   return (
     <div className="space-y-4 animate-in fade-in duration-500 pb-20">
-      {/* Duplicate Detection Alert Banner */}
       {duplicateInfo.deleteList.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 animate-in slide-in-from-top duration-500">
           <div className="flex items-center gap-4 text-center md:text-left">
@@ -350,10 +358,9 @@ const TransactionList: React.FC<TransactionListProps> = ({
         </div>
       )}
 
-      {/* Viewing Transaction Modal */}
       {viewingTransaction && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[150] flex items-center justify-center p-4" onClick={() => setViewingTransaction(null)}>
-          <div className="bg-white w-full max-md rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
             <div className={`p-6 flex items-center justify-between border-b border-gray-100 ${viewingTransaction.type === TransactionType.INCOME ? 'bg-emerald-50/50' : 'bg-rose-50/50'}`}>
               <div className="flex items-center gap-3">
                 <div className={`p-2 rounded-xl ${viewingTransaction.type === TransactionType.INCOME ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
@@ -383,8 +390,13 @@ const TransactionList: React.FC<TransactionListProps> = ({
                 <h2 className={`text-4xl font-black ${viewingTransaction.type === TransactionType.INCOME ? 'text-emerald-600' : 'text-gray-900'}`}>
                   {viewingTransaction.type === TransactionType.INCOME ? '+' : '-'}${viewingTransaction.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </h2>
-                <div className="mt-2 flex items-center gap-2 text-gray-400 font-bold text-xs">
+                <div className={`mt-2 flex items-center gap-2 font-bold text-xs ${viewingTransaction.fromTemplate ? 'text-rose-600' : 'text-gray-400'}`}>
                   <Calendar size={14} /> {viewingTransaction.date}
+                  {viewingTransaction.fromTemplate && (
+                    <span className="flex items-center gap-1 ml-1 text-[9px] px-1.5 py-0.5 bg-rose-50 rounded border border-rose-100 uppercase tracking-tighter">
+                      <Repeat size={10} /> Recurring
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -418,20 +430,20 @@ const TransactionList: React.FC<TransactionListProps> = ({
                 <div className="flex gap-3">
                   <button 
                     onClick={() => { onSaveAsTemplate(viewingTransaction!); setViewingTransaction(null); }}
-                    className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all active:scale-[0.98]"
+                    className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all active:scale-95"
                   >
                     <Repeat size={14} /> Save as Recurring
                   </button>
                   <button 
                     onClick={() => { setDeletingTransaction(viewingTransaction!); setViewingTransaction(null); }}
-                    className="flex-1 py-4 bg-rose-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 hover:bg-rose-700 transition-all active:scale-[0.98]"
+                    className="flex-1 py-4 bg-rose-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 hover:bg-rose-700 transition-all active:scale-95"
                   >
                     <Trash2 size={14} /> Delete Entry
                   </button>
                 </div>
                 <button 
                   onClick={() => setViewingTransaction(null)}
-                  className="w-full py-4 bg-gray-100 text-gray-500 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-all active:scale-[0.98]"
+                  className="w-full py-4 bg-gray-100 text-gray-500 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-all active:scale-95"
                 >
                   Dismiss
                 </button>
@@ -464,9 +476,9 @@ const TransactionList: React.FC<TransactionListProps> = ({
               <div className="min-h-[46px] w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl flex flex-wrap gap-2 items-center focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100 transition-all">
                 <Search size={16} className="text-gray-400 shrink-0" />
                 {activeFilters.map(f => (
-                  <span key={f} className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-600 text-white rounded-lg text-[10px] font-black uppercase tracking-tight shadow-sm">
-                    {f}
-                    <button onClick={() => removeFilter(f)} className="hover:text-blue-100 transition-colors"><X size={10} /></button>
+                  <span key={`${f.type}-${f.value}`} className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-600 text-white rounded-lg text-[10px] font-black uppercase tracking-tight shadow-sm">
+                    <span className="opacity-60">{getScopeLabel(f.type)}:</span> {f.value}
+                    <button onClick={() => removeFilter(f.value, f.type)} className="hover:text-blue-100 transition-colors"><X size={10} /></button>
                   </span>
                 ))}
                 <input 
@@ -481,22 +493,33 @@ const TransactionList: React.FC<TransactionListProps> = ({
                   onFocus={() => setShowSuggestions(true)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && inputValue.trim()) addFilter(inputValue);
-                    if (e.key === 'Backspace' && !inputValue && activeFilters.length > 0) removeFilter(activeFilters[activeFilters.length - 1]);
+                    if (e.key === 'Backspace' && !inputValue && activeFilters.length > 0) {
+                      const last = activeFilters[activeFilters.length - 1];
+                      removeFilter(last.value, last.type);
+                    }
                   }}
                 />
               </div>
 
               {showSuggestions && autocompleteSuggestions.length > 0 && (
                 <div className="absolute left-0 right-0 top-full mt-2 bg-white rounded-xl shadow-2xl border border-gray-100 py-2 z-40 max-h-64 overflow-y-auto animate-in fade-in slide-in-from-top-1">
-                  {autocompleteSuggestions.map((s, idx) => (
-                    <button 
-                      key={idx}
-                      onClick={() => addFilter(s.label)}
-                      className="w-full px-4 py-2.5 text-left hover:bg-blue-50 flex items-center justify-between group transition-colors"
-                    >
-                      <span className="text-xs font-bold text-gray-700">{s.label}</span>
-                      <span className="text-[8px] font-black uppercase tracking-widest text-gray-300 group-hover:text-blue-500">{s.type}</span>
-                    </button>
+                  {autocompleteSuggestions.map((group) => (
+                    <div key={group.type}>
+                      <div className="px-4 py-1.5 bg-gray-50/80 text-[9px] font-black text-gray-400 uppercase tracking-widest border-y border-gray-100/50 flex items-center justify-between">
+                        <span>{getScopeLabel(group.type)}</span>
+                        <div className="w-8 h-[1px] bg-gray-200"></div>
+                      </div>
+                      {group.items.map((label, idx) => (
+                        <button 
+                          key={idx}
+                          onClick={() => addFilter(label, group.type)}
+                          className="w-full px-4 py-2.5 text-left hover:bg-blue-50 flex items-center justify-between group transition-colors"
+                        >
+                          <span className="text-xs font-bold text-gray-700">{label}</span>
+                          <Plus size={10} className="text-gray-200 group-hover:text-blue-500 transition-all opacity-0 group-hover:opacity-100" />
+                        </button>
+                      ))}
+                    </div>
                   ))}
                 </div>
               )}
@@ -532,7 +555,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
                 onClick={() => toggleDateRange('month')} 
                 active={startDate === datePresets.month.start && endDate === datePresets.month.end} 
               />
-              
               <div className="relative">
                 <select 
                   value={currentSelectedYear}
@@ -574,7 +596,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
           <table className="w-full text-left border-collapse min-w-[900px]">
             <thead className="sticky top-0 z-20">
               <tr className="bg-gray-50 border-b border-gray-100 text-[9px] font-black text-gray-400 uppercase tracking-widest">
-                <th className="px-6 py-4 w-28 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => toggleSort('date')}>
+                <th className="px-6 py-4 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => toggleSort('date')}>
                   <div className="flex items-center">Date <SortIndicator columnKey="date" /></div>
                 </th>
                 <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => toggleSort('category')}>
@@ -598,14 +620,16 @@ const TransactionList: React.FC<TransactionListProps> = ({
               {filteredTransactions.map(t => {
                 const isDuplicate = t.id && duplicateInfo.flaggedIds.has(t.id);
                 const isToBeDeleted = t.id && duplicateInfo.deleteList.includes(t.id);
-                
                 return (
                   <tr 
                     key={t.id} 
                     className={`hover:bg-blue-50/20 group transition-colors cursor-pointer ${isDuplicate ? 'bg-amber-50/10' : ''}`}
                     onClick={() => setViewingTransaction(t)}
                   >
-                    <td className="px-6 py-3.5 text-gray-400 font-bold text-[10px] uppercase tracking-tighter">
+                    <td 
+                      className={`px-6 py-3.5 font-bold text-[10px] uppercase tracking-tighter ${t.fromTemplate ? 'text-rose-600' : 'text-gray-400'}`}
+                      title={t.fromTemplate ? "Posted via Recurring Transactions" : undefined}
+                    >
                       <div className="flex items-center gap-2">
                         {isToBeDeleted && <div className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-sm" title="Marked as copy" />}
                         {t.date}
@@ -613,17 +637,17 @@ const TransactionList: React.FC<TransactionListProps> = ({
                     </td>
                     <td className="px-6 py-3.5">
                       <div className="flex items-center gap-2">
-                        <button onClick={(e) => { e.stopPropagation(); setSelectedCategoryForDetail(t.category); }} className="font-black text-gray-900 uppercase tracking-tight text-xs hover:text-blue-600">{t.category}</button>
+                        <button onClick={(e) => { e.stopPropagation(); addFilter(t.category, 'category'); }} className="font-black text-gray-900 uppercase tracking-tight text-xs hover:text-blue-600">{t.category}</button>
                       </div>
                     </td>
                     <td className="px-6 py-3.5">
                       {t.subCategory ? (
-                        <button onClick={(e) => { e.stopPropagation(); setSelectedSubCategoryForDetail({ cat: t.category, sub: t.subCategory! }); }} className="text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-blue-600">{t.subCategory}</button>
+                        <button onClick={(e) => { e.stopPropagation(); addFilter(t.subCategory!, 'sub'); }} className="text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-blue-600">{t.subCategory}</button>
                       ) : <span className="text-gray-200 italic">-</span>}
                     </td>
                     <td className="px-6 py-3.5">
                       <div className="flex items-center gap-2">
-                        <button onClick={(e) => { e.stopPropagation(); setSelectedMerchantForDetail(t.merchant || 'Undefined'); }} className="font-black text-gray-700 uppercase tracking-tight text-xs hover:text-blue-600 truncate max-w-[150px]">
+                        <button onClick={(e) => { e.stopPropagation(); addFilter(t.merchant || 'Undefined', 'merchant'); }} className="font-black text-gray-700 uppercase tracking-tight text-xs hover:text-blue-600 truncate max-w-[150px]">
                           {t.merchant || 'Undefined'}
                         </button>
                         {t.description && (
@@ -639,7 +663,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
                     </td>
                     <td className="px-6 py-3.5">
                       {t.paymentMethod ? (
-                        <button onClick={(e) => { e.stopPropagation(); setSelectedPaymentForDetail(t.paymentMethod!); }} className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-blue-600">
+                        <button onClick={(e) => { e.stopPropagation(); addFilter(t.paymentMethod!, 'payment'); }} className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-blue-600">
                           <CreditCard size={12} className="text-gray-300" /> {t.paymentMethod}
                         </button>
                       ) : <span className="text-gray-200">-</span>}
@@ -651,21 +675,13 @@ const TransactionList: React.FC<TransactionListProps> = ({
                 );
               })}
               {filteredTransactions.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-6 py-16 text-center">
-                    <div className="flex flex-col items-center gap-2 opacity-20">
-                      <ListOrdered size={40} />
-                      <p className="text-xs font-black uppercase tracking-widest">No Records Found</p>
-                    </div>
-                  </td>
-                </tr>
+                <tr><td colSpan={6} className="px-6 py-16 text-center"><div className="flex flex-col items-center gap-2 opacity-20"><ListOrdered size={40} /><p className="text-xs font-black uppercase tracking-widest">No Records Found</p></div></td></tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Bulk Delete Confirm Modal */}
       {isCleaningDuplicates && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-sm rounded-3xl p-8 text-center border border-gray-100 shadow-2xl">
@@ -677,27 +693,18 @@ const TransactionList: React.FC<TransactionListProps> = ({
               This will safely remove all <span className="font-bold text-gray-900">{duplicateInfo.deleteList.length}</span> identical entries, keeping only the original record for each.
             </p>
             <div className="flex flex-col gap-3">
-              <button 
-                onClick={handleCleanDuplicates}
-                className="w-full py-4 rounded-2xl bg-rose-600 text-white font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-100 hover:bg-rose-700 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-              >
+              <button onClick={handleCleanDuplicates} className="w-full py-4 rounded-2xl bg-rose-600 text-white font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-100 hover:bg-rose-700 transition-all active:scale-95 flex items-center justify-center gap-2">
                 <CheckCircle size={14} /> Clear {duplicateInfo.deleteList.length} Duplicates
               </button>
-              <button 
-                onClick={() => setIsCleaningDuplicates(false)}
-                className="w-full py-4 rounded-2xl bg-gray-100 text-gray-500 font-black uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-all"
-              >
-                Cancel
-              </button>
+              <button onClick={() => setIsCleaningDuplicates(false)} className="w-full py-4 rounded-2xl bg-gray-100 text-gray-500 font-black uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-all">Cancel</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Transaction Add/Edit Modal */}
       {(isAdding || editingTransaction) && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
               <h3 className="font-black text-gray-800 uppercase tracking-tight text-xs flex items-center gap-2">
                 {editingTransaction ? <Edit2 size={14} /> : <PlusCircle size={14} />}
@@ -725,10 +732,9 @@ const TransactionList: React.FC<TransactionListProps> = ({
         </div>
       )}
 
-      {/* Delete Record Confirmation */}
       {deletingTransaction && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-sm rounded-2xl p-6 text-center border border-gray-100 shadow-2xl">
+          <div className="bg-white w-full max-w-sm rounded-2xl p-6 text-center border border-gray-100 shadow-2xl">
             <AlertCircle size={40} className="mx-auto text-rose-500 mb-4" />
             <h3 className="text-xl font-black uppercase mb-2">Delete Record?</h3>
             <p className="text-sm text-gray-500 mb-6">This action cannot be undone.</p>
