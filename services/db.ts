@@ -1,13 +1,14 @@
-
-import { Transaction, Category, Merchant, RecurringTemplate, PaymentMethod } from '../types';
+import { Transaction, Category, Merchant, RecurringTemplate, PaymentMethod, StatementRecord, DraftStatement } from '../types';
 
 const DB_NAME = 'FinTrackDB';
-const DB_VERSION = 4; 
+const DB_VERSION = 6; 
 const STORE_TRANSACTIONS = 'transactions';
 const STORE_CATEGORIES = 'categories';
 const STORE_MERCHANTS = 'vendors'; 
 const STORE_TEMPLATES = 'templates';
 const STORE_PAYMENT_METHODS = 'paymentMethods';
+const STORE_STATEMENTS = 'reconciliationStatements';
+const STORE_DRAFTS = 'reconciliationDrafts';
 
 export const initDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
@@ -29,6 +30,12 @@ export const initDB = (): Promise<IDBDatabase> => {
       }
       if (!db.objectStoreNames.contains(STORE_PAYMENT_METHODS)) {
         db.createObjectStore(STORE_PAYMENT_METHODS, { keyPath: 'id', autoIncrement: true });
+      }
+      if (!db.objectStoreNames.contains(STORE_STATEMENTS)) {
+        db.createObjectStore(STORE_STATEMENTS, { keyPath: 'id', autoIncrement: true });
+      }
+      if (!db.objectStoreNames.contains(STORE_DRAFTS)) {
+        db.createObjectStore(STORE_DRAFTS, { keyPath: 'id', autoIncrement: true });
       }
     };
 
@@ -61,7 +68,10 @@ const add = <T>(db: IDBDatabase, storeName: string, item: T): Promise<number> =>
 const update = <T>(db: IDBDatabase, storeName: string, item: T): Promise<void> => {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, 'readwrite');
-    tx.objectStore(storeName).put(item);
+    const store = tx.objectStore(storeName);
+    const data = { ...item } as any;
+    if (data.id === undefined) delete data.id;
+    store.put(data);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -81,6 +91,16 @@ export const addTransaction = (db: IDBDatabase, t: Transaction) => add(db, STORE
 export const updateTransaction = (db: IDBDatabase, t: Transaction) => update(db, STORE_TRANSACTIONS, t);
 export const deleteTransaction = (db: IDBDatabase, id: number) => remove(db, STORE_TRANSACTIONS, id);
 
+export const bulkUpdateTransactions = (db: IDBDatabase, txs: Transaction[]): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_TRANSACTIONS, 'readwrite');
+    const store = tx.objectStore(STORE_TRANSACTIONS);
+    txs.forEach(t => store.put(t));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+};
+
 export const deleteTransactions = (db: IDBDatabase, ids: number[]): Promise<void> => {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_TRANSACTIONS, 'readwrite');
@@ -96,10 +116,71 @@ export const addCategory = (db: IDBDatabase, c: Category) => add(db, STORE_CATEG
 export const updateCategory = (db: IDBDatabase, c: Category) => update(db, STORE_CATEGORIES, c);
 export const deleteCategory = (db: IDBDatabase, id: number) => remove(db, STORE_CATEGORIES, id);
 
+export const mergeCategories = async (db: IDBDatabase, sourceNames: string[], targetCategory: Category, sourceIdsToDelete: number[]): Promise<void> => {
+  const txs = await getAllTransactions(db);
+  const toUpdate = txs.filter(t => sourceNames.includes(t.category));
+  
+  if (toUpdate.length > 0) {
+    const updated = toUpdate.map(t => ({ ...t, category: targetCategory.name }));
+    await bulkUpdateTransactions(db, updated);
+  }
+
+  // Update target category with combined sub-categories
+  await updateCategory(db, targetCategory);
+  
+  const tx = db.transaction(STORE_CATEGORIES, 'readwrite');
+  const store = tx.objectStore(STORE_CATEGORIES);
+  sourceIdsToDelete.forEach(id => store.delete(id));
+  
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+};
+
+export const moveSubCategory = async (db: IDBDatabase, subName: string, sourceCat: Category, targetCat: Category): Promise<void> => {
+  const txs = await getAllTransactions(db);
+  const toUpdate = txs.filter(t => t.category === sourceCat.name && t.subCategory === subName);
+  
+  if (toUpdate.length > 0) {
+    const updated = toUpdate.map(t => ({ ...t, category: targetCat.name }));
+    await bulkUpdateTransactions(db, updated);
+  }
+
+  // Update categories metadata
+  await updateCategory(db, {
+    ...sourceCat,
+    subCategories: (sourceCat.subCategories || []).filter(s => s !== subName)
+  });
+  
+  const targetSubs = new Set(targetCat.subCategories || []);
+  targetSubs.add(subName);
+  await updateCategory(db, {
+    ...targetCat,
+    subCategories: Array.from(targetSubs)
+  });
+};
+
 export const getAllMerchants = (db: IDBDatabase) => getAll<Merchant>(db, STORE_MERCHANTS);
 export const addMerchant = (db: IDBDatabase, m: Merchant) => add(db, STORE_MERCHANTS, m);
 export const updateMerchant = (db: IDBDatabase, m: Merchant) => update(db, STORE_MERCHANTS, m);
 export const deleteMerchant = (db: IDBDatabase, id: number) => remove(db, STORE_MERCHANTS, id);
+
+export const mergeMerchants = async (db: IDBDatabase, sourceNames: string[], targetName: string, sourceIdsToDelete: number[]): Promise<void> => {
+  const txs = await getAllTransactions(db);
+  const toUpdate = txs.filter(t => t.merchant && sourceNames.includes(t.merchant));
+  if (toUpdate.length > 0) {
+    const updated = toUpdate.map(t => ({ ...t, merchant: targetName }));
+    await bulkUpdateTransactions(db, updated);
+  }
+  const tx = db.transaction(STORE_MERCHANTS, 'readwrite');
+  const store = tx.objectStore(STORE_MERCHANTS);
+  sourceIdsToDelete.forEach(id => store.delete(id));
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+};
 
 export const getAllTemplates = (db: IDBDatabase) => getAll<RecurringTemplate>(db, STORE_TEMPLATES);
 export const addTemplate = (db: IDBDatabase, t: RecurringTemplate) => add(db, STORE_TEMPLATES, t);
@@ -111,14 +192,23 @@ export const addPaymentMethod = (db: IDBDatabase, p: PaymentMethod) => add(db, S
 export const updatePaymentMethod = (db: IDBDatabase, p: PaymentMethod) => update(db, STORE_PAYMENT_METHODS, p);
 export const deletePaymentMethod = (db: IDBDatabase, id: number) => remove(db, STORE_PAYMENT_METHODS, id);
 
+export const getAllStatements = (db: IDBDatabase) => getAll<StatementRecord>(db, STORE_STATEMENTS);
+export const addStatement = (db: IDBDatabase, s: StatementRecord) => add(db, STORE_STATEMENTS, s);
+export const deleteStatement = (db: IDBDatabase, id: number) => remove(db, STORE_STATEMENTS, id);
+
+export const getAllDrafts = (db: IDBDatabase) => getAll<DraftStatement>(db, STORE_DRAFTS);
+export const saveDraft = (db: IDBDatabase, d: DraftStatement) => update(db, STORE_DRAFTS, d);
+export const deleteDraft = (db: IDBDatabase, id: number) => remove(db, STORE_DRAFTS, id);
+
 export const clearAllData = (db: IDBDatabase): Promise<void> => {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([STORE_TRANSACTIONS, STORE_CATEGORIES, STORE_MERCHANTS, STORE_TEMPLATES, STORE_PAYMENT_METHODS], 'readwrite');
-    tx.objectStore(STORE_TRANSACTIONS).clear();
-    tx.objectStore(STORE_CATEGORIES).clear();
-    tx.objectStore(STORE_MERCHANTS).clear();
-    tx.objectStore(STORE_TEMPLATES).clear();
-    tx.objectStore(STORE_PAYMENT_METHODS).clear();
+    const stores = [STORE_TRANSACTIONS, STORE_CATEGORIES, STORE_MERCHANTS, STORE_TEMPLATES, STORE_PAYMENT_METHODS, STORE_STATEMENTS, STORE_DRAFTS];
+    const tx = db.transaction(stores, 'readwrite');
+    stores.forEach(s => {
+      if (db.objectStoreNames.contains(s)) {
+        tx.objectStore(s).clear();
+      }
+    });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -127,15 +217,15 @@ export const clearAllData = (db: IDBDatabase): Promise<void> => {
 export const importAllData = async (db: IDBDatabase, data: any): Promise<void> => {
   await clearAllData(db);
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([STORE_TRANSACTIONS, STORE_CATEGORIES, STORE_MERCHANTS, STORE_PAYMENT_METHODS, STORE_TEMPLATES], 'readwrite');
-    
-    // We use .put() instead of .add() to ensure IDs are respected during restoration
+    const stores = [STORE_TRANSACTIONS, STORE_CATEGORIES, STORE_MERCHANTS, STORE_PAYMENT_METHODS, STORE_TEMPLATES, STORE_STATEMENTS, STORE_DRAFTS];
+    const tx = db.transaction(stores, 'readwrite');
     if (data.transactions) data.transactions.forEach((t: any) => tx.objectStore(STORE_TRANSACTIONS).put(t));
     if (data.categories) data.categories.forEach((c: any) => tx.objectStore(STORE_CATEGORIES).put(c));
     if (data.merchants) data.merchants.forEach((m: any) => tx.objectStore(STORE_MERCHANTS).put(m));
     if (data.paymentMethods) data.paymentMethods.forEach((p: any) => tx.objectStore(STORE_PAYMENT_METHODS).put(p));
     if (data.templates) data.templates.forEach((tmp: any) => tx.objectStore(STORE_TEMPLATES).put(tmp));
-    
+    if (data.statements) data.statements.forEach((s: any) => tx.objectStore(STORE_STATEMENTS).put(s));
+    if (data.drafts) data.drafts.forEach((d: any) => tx.objectStore(STORE_DRAFTS).put(d));
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });

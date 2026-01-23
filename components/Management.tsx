@@ -1,5 +1,4 @@
-
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Transaction, Category, Merchant, PaymentMethod, TransactionType } from '../types';
 import { 
   Trash2, 
@@ -31,18 +30,25 @@ import {
   Info,
   Calendar,
   Layers,
-  Tag
+  Tag,
+  GitMerge,
+  ArrowRight,
+  ShieldAlert,
+  RotateCcw,
+  ArrowRightLeft
 } from 'lucide-react';
 
 interface HeaderProps {
   title: string;
   icon: any;
-  onAdd: () => void;
-  addLabel: string;
-  buttonColor: string;
+  onAdd?: () => void;
+  addLabel?: string;
+  buttonColor?: string;
   searchValue?: string;
   onSearchChange?: (val: string) => void;
   searchPlaceholder?: string;
+  selectionCount?: number;
+  onMerge?: () => void;
 }
 
 const ManagementHeader = ({ 
@@ -53,7 +59,9 @@ const ManagementHeader = ({
   buttonColor,
   searchValue, 
   onSearchChange, 
-  searchPlaceholder
+  searchPlaceholder,
+  selectionCount = 0,
+  onMerge
 }: HeaderProps) => (
   <div className="flex flex-col gap-6 mb-8">
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -63,17 +71,29 @@ const ManagementHeader = ({
         </div>
         <h3 className="text-xl font-black text-gray-800 uppercase tracking-tight">{title}</h3>
       </div>
-      <button 
-        onClick={onAdd}
-        style={{ backgroundColor: buttonColor }}
-        className="text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
-      >
-        <Plus size={16} /> {addLabel}
-      </button>
+      <div className="flex items-center gap-3">
+        {selectionCount > 1 && onMerge && (
+          <button 
+            onClick={onMerge}
+            className="bg-indigo-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+          >
+            <GitMerge size={16} /> Merge {selectionCount} Selected
+          </button>
+        )}
+        {onAdd && (
+          <button 
+            onClick={onAdd}
+            style={{ backgroundColor: buttonColor }}
+            className="text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+          >
+            <Plus size={16} /> {addLabel}
+          </button>
+        )}
+      </div>
     </div>
 
-    <div className="flex flex-col md:flex-row gap-4">
-      {onSearchChange && (
+    {onSearchChange && (
+      <div className="flex flex-col md:flex-row gap-4">
         <div className="relative group flex-1">
           <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors">
             <Search size={16} />
@@ -94,8 +114,8 @@ const ManagementHeader = ({
             </button>
           )}
         </div>
-      )}
-    </div>
+      </div>
+    )}
   </div>
 );
 
@@ -108,10 +128,13 @@ interface ManagementProps {
   onDeleteCategory: (id: number) => void;
   onDeleteSubCategory: (catId: number, subName: string) => void;
   onRenameSubCategory: (catId: number, oldName: string, newName: string) => void;
+  onMergeCategories?: (sourceNames: string[], targetCategory: Category, sourceIds: number[]) => void;
+  onMoveSubCategory?: (subName: string, sourceCatId: number, targetCatName: string) => void;
   merchants: Merchant[];
   onAddMerchant: (v: Merchant) => void;
   onUpdateMerchant: (v: Merchant) => void;
   onDeleteMerchant: (id: number) => void;
+  onMergeMerchants?: (sourceNames: string[], targetName: string, sourceIds: number[]) => void;
   paymentMethods: PaymentMethod[];
   onAddPaymentMethod: (p: PaymentMethod) => void;
   onUpdatePaymentMethod: (p: PaymentMethod) => void;
@@ -132,10 +155,13 @@ const Management: React.FC<ManagementProps> = ({
   onDeleteCategory,
   onDeleteSubCategory,
   onRenameSubCategory,
+  onMergeCategories,
+  onMoveSubCategory,
   merchants,
   onAddMerchant,
   onUpdateMerchant,
   onDeleteMerchant,
+  onMergeMerchants,
   paymentMethods,
   onAddPaymentMethod,
   onUpdatePaymentMethod,
@@ -149,6 +175,12 @@ const Management: React.FC<ManagementProps> = ({
   const [editingItem, setEditingItem] = useState<{ type: 'category' | 'merchant' | 'payment' | 'subCategory', data: any, catId?: number } | null>(null);
   const [viewingItem, setViewingItem] = useState<{ type: 'category' | 'merchant' | 'payment', id: number } | null>(null);
   const [deletingItem, setDeletingItem] = useState<{ type: 'category' | 'merchant' | 'payment', id: number, name: string } | null>(null);
+  const [mergingItem, setMergingItem] = useState<{ ids: number[], targetId?: number, type: 'merchant' | 'category' } | null>(null);
+  const [isConfirmingMerge, setIsConfirmingMerge] = useState(false);
+
+  // Move Sub-category state
+  const [movingSubInfo, setMovingSubInfo] = useState<{ catId: number, subName: string } | null>(null);
+  const [targetMoveCatName, setTargetMoveCatName] = useState('');
 
   const [editName, setEditName] = useState('');
   const [editColor, setEditColor] = useState('#3B82F6');
@@ -161,10 +193,13 @@ const Management: React.FC<ManagementProps> = ({
   const [isAddingSub, setIsAddingSub] = useState(false);
   const [renamingSub, setRenamingSub] = useState<{ originalName: string, currentName: string } | null>(null);
 
-  // Search & Sort States
   const [searchValue, setSearchValue] = useState('');
   const [sortKey, setSortKey] = useState<string>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeViewingData = useMemo(() => {
     if (!viewingItem) return null;
@@ -175,14 +210,9 @@ const Management: React.FC<ManagementProps> = ({
   }, [viewingItem, categories, merchants, paymentMethods]);
 
   useEffect(() => {
-    if (mode === 'merchants' && targetMerchantName) {
-      const m = merchants.find(merch => merch.name.toLowerCase() === targetMerchantName.toLowerCase());
-      if (m && m.id) {
-        setViewingItem({ type: 'merchant', id: m.id });
-        onClearTargetMerchant?.();
-      }
-    }
-  }, [mode, targetMerchantName, merchants, onClearTargetMerchant]);
+    setSelectedIds(new Set());
+    setSearchValue('');
+  }, [mode]);
 
   const categoryStatsMap = useMemo(() => {
     const stats: Record<string, number> = {};
@@ -192,9 +222,6 @@ const Management: React.FC<ManagementProps> = ({
     });
     return stats;
   }, [categories, transactions]);
-
-  // Fix: Explicitly type parameters in reduce to ensure correct arithmetic operation
-  const totalCategoriesSum = useMemo(() => Object.values(categoryStatsMap).reduce((sum: number, val: number) => sum + val, 0), [categoryStatsMap]);
 
   const merchantStatsMap = useMemo(() => {
     const stats: Record<string, { total: number; count: number; lastDate: string | null }> = {};
@@ -209,9 +236,6 @@ const Management: React.FC<ManagementProps> = ({
     return stats;
   }, [merchants, transactions]);
 
-  // Fix: Explicitly type parameters in reduce
-  const totalMerchantsSum = useMemo(() => Object.values(merchantStatsMap).reduce((sum: number, val: any) => sum + val.total, 0), [merchantStatsMap]);
-
   const paymentStatsMap = useMemo(() => {
     const stats: Record<string, { total: number; count: number }> = {};
     paymentMethods.forEach(p => {
@@ -225,46 +249,34 @@ const Management: React.FC<ManagementProps> = ({
     return stats;
   }, [paymentMethods, transactions]);
 
-  // Fix: Explicitly type accumulator in reduce and typecast val to any for property access
-  const totalPaymentsSum = useMemo(() => Object.values(paymentStatsMap).reduce((sum: number, val: any) => sum + val.total, 0), [paymentStatsMap]);
-
   const filteredAndSortedItems = useMemo(() => {
     let baseItems: any[] = [];
     if (mode === 'categories') baseItems = categories;
     else if (mode === 'merchants') baseItems = merchants;
     else if (mode === 'payments') baseItems = paymentMethods;
+    else return [];
 
     let result = baseItems;
     if (searchValue.trim()) {
       const query = searchValue.toLowerCase();
       result = baseItems.filter(item => item.name.toLowerCase().includes(query));
     }
-
     return [...result].sort((a, b) => {
       let valA: any, valB: any;
       const nameA = a.name.toLowerCase();
       const nameB = b.name.toLowerCase();
-
-      if (sortKey === 'name') {
-        valA = nameA; valB = nameB;
-      } else if (sortKey === 'spend' || sortKey === 'volume') {
+      if (sortKey === 'name') { valA = nameA; valB = nameB; }
+      else if (sortKey === 'spend' || sortKey === 'volume') {
         if (mode === 'categories') { valA = categoryStatsMap[nameA] || 0; valB = categoryStatsMap[nameB] || 0; }
-        else if (mode === 'merchants') { valA = (merchantStatsMap[nameA] as any)?.total || 0; valB = (merchantStatsMap[nameB] as any)?.total || 0; }
-        // Fix: Cast access to any to handle unknown properties on potentially missing keys
-        else { valA = (paymentStatsMap[nameA] as any)?.total || 0; valB = (paymentStatsMap[nameB] as any)?.total || 0; }
+        else if (mode === 'merchants') { valA = merchantStatsMap[nameA]?.total || 0; valB = merchantStatsMap[nameB]?.total || 0; }
+        else { valA = paymentStatsMap[nameA]?.total || 0; valB = paymentStatsMap[nameB]?.total || 0; }
       } else if (sortKey === 'count') {
         if (mode === 'categories') { valA = a.subCategories?.length || 0; valB = b.subCategories?.length || 0; }
-        else if (mode === 'merchants') { valA = (merchantStatsMap[nameA] as any)?.count || 0; valB = (merchantStatsMap[nameB] as any)?.count || 0; }
-        // Fix: Cast access to any to handle unknown properties on potentially missing keys
-        else { valA = (paymentStatsMap[nameA] as any)?.count || 0; valB = (paymentStatsMap[nameB] as any)?.count || 0; }
-      } else if (sortKey === 'type') {
-        valA = a.type || '';
-        valB = b.type || '';
-      } else if (sortKey === 'lastVisit') {
-        valA = (merchantStatsMap[nameA] as any)?.lastDate || '';
-        valB = (merchantStatsMap[nameB] as any)?.lastDate || '';
-      }
-
+        else if (mode === 'merchants') { valA = merchantStatsMap[nameA]?.count || 0; valB = merchantStatsMap[nameB]?.count || 0; }
+        else { valA = paymentStatsMap[nameA]?.count || 0; valB = paymentStatsMap[nameB]?.count || 0; }
+      } else if (sortKey === 'type') { valA = a.type || ''; valB = b.type || ''; }
+      else if (sortKey === 'lastVisit') { valA = merchantStatsMap[nameA]?.lastDate || ''; valB = merchantStatsMap[nameB]?.lastDate || ''; }
+      
       if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
       if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
       return 0;
@@ -284,18 +296,13 @@ const Management: React.FC<ManagementProps> = ({
   const handleAddNew = () => {
     if (mode === 'categories') {
       setEditingItem({ type: 'category', data: { name: '', type: TransactionType.EXPENSE, subCategories: [] } });
-      setEditName('');
-      setEditType(TransactionType.EXPENSE);
+      setEditName(''); setEditType(TransactionType.EXPENSE);
     } else if (mode === 'merchants') {
       setEditingItem({ type: 'merchant', data: { name: '' } });
-      setEditName('');
-      setEditLocation('');
-      setEditWebsite('');
-      setEditPhone('');
+      setEditName(''); setEditLocation(''); setEditWebsite(''); setEditPhone('');
     } else if (mode === 'payments') {
       setEditingItem({ type: 'payment', data: { name: '', color: '#3B82F6' } });
-      setEditName('');
-      setEditColor('#3B82F6');
+      setEditName(''); setEditColor('#3B82F6');
     }
   };
 
@@ -305,191 +312,332 @@ const Management: React.FC<ManagementProps> = ({
     if (type === 'payment' || type === 'category') setEditColor(item.color || '#3B82F6');
     if (type === 'category') setEditType(item.type);
     if (type === 'merchant') {
-      setEditLocation(item.location || '');
-      setEditWebsite(item.website || '');
-      setEditPhone(item.phone || '');
+      setEditLocation(item.location || ''); setEditWebsite(item.website || ''); setEditPhone(item.phone || '');
     }
   };
 
   const handleSave = () => {
     const trimmedName = editName.trim();
     if (!trimmedName) return;
-    
     const isNew = editingItem?.data.id === undefined;
-
     if (editingItem?.type === 'category') {
       if (isNew) onAddCategory({ name: trimmedName, color: editColor, type: editType, subCategories: [] });
       else onUpdateCategory({ ...editingItem.data, name: trimmedName, color: editColor, type: editType });
-    }
-    else if (editingItem?.type === 'merchant') {
+    } else if (editingItem?.type === 'merchant') {
       if (isNew) onAddMerchant({ name: trimmedName, location: editLocation.trim(), website: editWebsite.trim(), phone: editPhone.trim() });
       else onUpdateMerchant({ ...editingItem.data, name: trimmedName, location: editLocation.trim(), website: editWebsite.trim(), phone: editPhone.trim() });
-    }
-    else if (editingItem?.type === 'payment') {
+    } else if (editingItem?.type === 'payment') {
       if (isNew) onAddPaymentMethod({ name: trimmedName, color: editColor });
       else onUpdatePaymentMethod({ ...editingItem.data, name: trimmedName, color: editColor });
-    }
-    else if (editingItem?.type === 'subCategory' && editingItem.catId) {
+    } else if (editingItem?.type === 'subCategory' && editingItem.catId) {
       onRenameSubCategory(editingItem.catId, editingItem.data, trimmedName);
     }
     setEditingItem(null);
   };
 
-  const confirmDelete = () => {
-    if (!deletingItem || !deletingItem.id) return;
-    if (deletingItem.type === 'category') onDeleteCategory(deletingItem.id);
-    else if (deletingItem.type === 'merchant') onDeleteMerchant(deletingItem.id);
-    else if (deletingItem.type === 'payment') onDeletePaymentMethod(deletingItem.id);
-    setDeletingItem(null);
+  const toggleSelect = (id: number) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+  };
+
+  const handleConfirmMerge = () => {
+    if (!mergingItem || !mergingItem.targetId) return;
+    if (mergingItem.type === 'merchant' && onMergeMerchants) {
+      const targetMerchant = merchants.find(m => m.id === mergingItem.targetId);
+      if (!targetMerchant) return;
+      const sourceMerchants = merchants.filter(m => mergingItem.ids.includes(m.id!) && m.id !== targetMerchant.id);
+      onMergeMerchants(sourceMerchants.map(m => m.name), targetMerchant.name, sourceMerchants.map(m => m.id!));
+    } else if (mergingItem.type === 'category' && onMergeCategories) {
+      const targetCategory = categories.find(c => c.id === mergingItem.targetId);
+      if (!targetCategory) return;
+      const sourceCategories = categories.filter(c => mergingItem.ids.includes(c.id!) && c.id !== targetCategory.id);
+      const combinedSubs = new Set(targetCategory.subCategories || []);
+      sourceCategories.forEach(c => c.subCategories?.forEach(s => combinedSubs.add(s)));
+      const updatedTarget = { ...targetCategory, subCategories: Array.from(combinedSubs) };
+      onMergeCategories(sourceCategories.map(c => c.name), updatedTarget, sourceCategories.map(c => c.id!));
+    }
+    setMergingItem(null);
+    setIsConfirmingMerge(false);
+    setSelectedIds(new Set());
+  };
+
+  const handleMoveSubCategoryExecute = () => {
+    if (!movingSubInfo || !targetMoveCatName || !onMoveSubCategory) return;
+    onMoveSubCategory(movingSubInfo.subName, movingSubInfo.catId, targetMoveCatName);
+    setMovingSubInfo(null);
+    setTargetMoveCatName('');
   };
 
   const handleAddSub = () => {
     const trimmed = newSubName.trim();
     if (!trimmed || viewingItem?.type !== 'category') return;
-    
     const cat = categories.find(c => c.id === viewingItem.id);
     if (!cat) return;
-
     const subs = cat.subCategories || [];
-    if (subs.includes(trimmed)) { 
-      setNewSubName('');
-      setIsAddingSub(false);
-      return; 
-    }
-    
+    if (subs.includes(trimmed)) { setNewSubName(''); setIsAddingSub(false); return; }
     onUpdateCategory({ ...cat, subCategories: [...subs, trimmed] });
-    setNewSubName('');
-    setIsAddingSub(false);
+    setNewSubName(''); setIsAddingSub(false);
   };
 
   const handleFinishRenameSub = () => {
     if (!renamingSub || !viewingItem?.id) return;
     const trimmed = renamingSub.currentName.trim();
-    if (trimmed && trimmed !== renamingSub.originalName) {
-      onRenameSubCategory(viewingItem.id, renamingSub.originalName, trimmed);
-    }
+    if (trimmed && trimmed !== renamingSub.originalName) onRenameSubCategory(viewingItem.id, renamingSub.originalName, trimmed);
     setRenamingSub(null);
   };
 
+  const targetEntity = useMemo(() => {
+    if (!mergingItem || !mergingItem.targetId) return null;
+    return (mergingItem.type === 'merchant' ? merchants : categories).find(m => m.id === mergingItem.targetId);
+  }, [mergingItem, merchants, categories]);
+
+  const sourceEntities = useMemo(() => {
+    if (!mergingItem || !mergingItem.targetId) return [];
+    return (mergingItem.type === 'merchant' ? merchants : categories).filter(m => mergingItem.ids.includes(m.id!) && m.id !== mergingItem.targetId);
+  }, [mergingItem, merchants, categories]);
+
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
-      {/* Detail Modal */}
+      {/* Move Sub-category Dialog */}
+      {movingSubInfo && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[250] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-[32px] shadow-2xl border border-gray-100 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-8 border-b border-gray-50 bg-blue-50/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-600 text-white rounded-xl"><ArrowRightLeft size={20} /></div>
+                <h3 className="text-xl font-black text-gray-800 uppercase tracking-tight">Move Sub-category</h3>
+              </div>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-2">Relocate "{movingSubInfo.subName}" to another parent</p>
+            </div>
+            <div className="p-8 space-y-6">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Target Category</label>
+                <select 
+                  value={targetMoveCatName}
+                  onChange={(e) => setTargetMoveCatName(e.target.value)}
+                  className="w-full h-12 px-4 bg-gray-50 border border-gray-100 rounded-xl font-bold text-gray-900 outline-none focus:ring-4 focus:ring-blue-100 transition-all cursor-pointer appearance-none"
+                >
+                  <option value="">Choose Parent Category...</option>
+                  {categories.filter(c => c.id !== movingSubInfo.catId).map(c => (
+                    <option key={c.id} value={c.name}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex items-start gap-3">
+                <Info size={16} className="text-blue-600 shrink-0 mt-0.5" />
+                <p className="text-[10px] font-bold text-blue-700 uppercase leading-relaxed">
+                  This will re-assign all associated transactions to the new parent category and update category metadata automatically.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3 pt-2">
+                <button 
+                  onClick={handleMoveSubCategoryExecute}
+                  disabled={!targetMoveCatName}
+                  className={`w-full h-14 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl transition-all ${
+                    targetMoveCatName ? 'bg-blue-600 text-white shadow-blue-100 hover:bg-blue-700 active:scale-[0.98]' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  Execute Move
+                </button>
+                <button onClick={() => setMovingSubInfo(null)} className="w-full h-12 text-gray-500 font-black uppercase text-[10px] tracking-widest">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Merge Modal logic here... */}
+      {mergingItem && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[250] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-[32px] shadow-2xl border border-gray-100 overflow-hidden">
+            {isConfirmingMerge ? (
+              <div className="animate-in fade-in slide-in-from-right-4 duration-300">
+                <div className="p-8 border-b border-gray-50 bg-rose-50/50">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-rose-600 text-white rounded-xl"><ShieldAlert size={20} /></div>
+                    <h3 className="text-xl font-black text-rose-900 uppercase tracking-tight">Final Verification</h3>
+                  </div>
+                </div>
+                <div className="p-8 space-y-6">
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1 p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Remove</p>
+                      <div className="flex flex-wrap gap-1">
+                        {sourceEntities.map(m => (
+                          <span key={m.id} className="text-[10px] font-black uppercase text-rose-600 bg-rose-50 px-2 py-0.5 rounded">{m.name}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <ArrowRight className="text-gray-200" />
+                    <div className="flex-1 p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
+                      <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest mb-1">Keep</p>
+                      <p className="text-sm font-black text-indigo-900 uppercase">{targetEntity?.name}</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="p-8 border-t border-gray-50 flex gap-4">
+                  <button onClick={() => setIsConfirmingMerge(false)} className="flex-1 py-4 bg-gray-100 text-gray-500 rounded-2xl font-black uppercase text-[10px]">Back</button>
+                  <button onClick={handleConfirmMerge} className="flex-1 py-4 bg-rose-600 text-white rounded-2xl font-black uppercase text-[10px]">Execute</button>
+                </div>
+              </div>
+            ) : (
+              <div className="animate-in fade-in slide-in-from-left-4 duration-300">
+                <div className="p-8 border-b border-gray-50 bg-indigo-50/50">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-indigo-600 text-white rounded-xl"><GitMerge size={20} /></div>
+                    <h3 className="text-xl font-black text-gray-800 uppercase tracking-tight">Merge {mergingItem.type}s</h3>
+                  </div>
+                </div>
+                <div className="p-8 max-h-[50vh] overflow-y-auto space-y-3">
+                  {(mergingItem.type === 'merchant' ? merchants : categories).filter(m => mergingItem.ids.includes(m.id!)).map(m => (
+                    <button 
+                      key={m.id}
+                      onClick={() => setMergingItem({ ...mergingItem, targetId: m.id })}
+                      className={`w-full p-5 rounded-2xl text-left border-2 transition-all flex items-center justify-between ${
+                        mergingItem.targetId === m.id ? 'bg-indigo-50 border-indigo-600' : 'bg-white border-gray-100'
+                      }`}
+                    >
+                      <p className={`text-sm font-black uppercase ${mergingItem.targetId === m.id ? 'text-indigo-600' : 'text-gray-900'}`}>{m.name}</p>
+                      <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${mergingItem.targetId === m.id ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-200'}`}>
+                        {mergingItem.targetId === m.id && <Check size={14} />}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div className="p-8 border-t border-gray-50 flex gap-4">
+                  <button onClick={() => setMergingItem(null)} className="flex-1 py-4 bg-gray-100 text-gray-500 rounded-2xl font-black uppercase text-[10px]">Cancel</button>
+                  <button disabled={!mergingItem.targetId} onClick={() => setIsConfirmingMerge(true)} className={`flex-1 py-4 rounded-2xl font-black uppercase text-[10px] ${mergingItem.targetId ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-400'}`}>Proceed</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Editing Item Modal */}
+      {editingItem && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[300] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-[32px] shadow-2xl border border-gray-100 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+              <h3 className="text-sm font-black text-gray-800 uppercase tracking-widest">
+                {editingItem.data.id ? 'Edit' : 'Create'} {editingItem.type}
+              </h3>
+              <button onClick={() => setEditingItem(null)} className="p-2 text-gray-400 hover:bg-gray-100 rounded-full"><X size={20} /></button>
+            </div>
+            <div className="p-8 space-y-6">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Name</label>
+                <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full h-12 px-4 bg-gray-50 border border-gray-100 rounded-xl font-bold outline-none focus:ring-4 focus:ring-blue-100" />
+              </div>
+              {editingItem.type === 'category' && (
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Flow Type</label>
+                  <div className="flex bg-gray-50 p-1 rounded-xl h-11">
+                    <button onClick={() => setEditType(TransactionType.EXPENSE)} className={`flex-1 rounded-lg text-[10px] font-black uppercase ${editType === TransactionType.EXPENSE ? 'bg-white text-rose-500 shadow-sm' : 'text-gray-400'}`}>Expense</button>
+                    <button onClick={() => setEditType(TransactionType.INCOME)} className={`flex-1 rounded-lg text-[10px] font-black uppercase ${editType === TransactionType.INCOME ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-400'}`}>Income</button>
+                    <button onClick={() => setEditType(TransactionType.BOTH)} className={`flex-1 rounded-lg text-[10px] font-black uppercase ${editType === TransactionType.BOTH ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400'}`}>Both</button>
+                  </div>
+                </div>
+              )}
+              {(editingItem.type === 'category' || editingItem.type === 'payment') && (
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Visual Marker</label>
+                  <div className="flex gap-2">
+                    {['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#000000'].map(c => (
+                      <button key={c} onClick={() => setEditColor(c)} className={`w-8 h-8 rounded-full border-2 transition-all ${editColor === c ? 'border-gray-800 scale-110 shadow-lg' : 'border-transparent'}`} style={{ backgroundColor: c }} />
+                    ))}
+                  </div>
+                </div>
+              )}
+              {editingItem.type === 'merchant' && (
+                <>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Location</label>
+                    <input value={editLocation} onChange={(e) => setEditLocation(e.target.value)} className="w-full h-12 px-4 bg-gray-50 border border-gray-100 rounded-xl font-bold outline-none" placeholder="City, State or Address" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Website</label>
+                    <input value={editWebsite} onChange={(e) => setEditWebsite(e.target.value)} className="w-full h-12 px-4 bg-gray-50 border border-gray-100 rounded-xl font-bold outline-none" placeholder="https://..." />
+                  </div>
+                </>
+              )}
+              <div className="flex flex-col gap-3 pt-4">
+                <button onClick={handleSave} className="w-full h-12 bg-blue-600 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-blue-100">Save Changes</button>
+                <button onClick={() => setEditingItem(null)} className="w-full h-12 bg-gray-100 text-gray-500 rounded-xl font-black uppercase text-[10px] tracking-widest">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Viewing Item Modal */}
       {viewingItem && activeViewingData && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[150] flex items-center justify-center p-4" onClick={() => setViewingItem(null)}>
-          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-gray-100 overflow-hidden animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
             <div className={`p-6 flex items-center justify-between border-b border-gray-100 ${
-              viewingItem.type === 'category' ? 'bg-purple-50' : 
-              viewingItem.type === 'merchant' ? 'bg-teal-50' : 
-              'bg-orange-50'
+              viewingItem.type === 'category' ? 'bg-purple-50' : viewingItem.type === 'merchant' ? 'bg-teal-50' : 'bg-blue-50'
             }`}>
               <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-xl ${
-                  viewingItem.type === 'category' ? 'bg-purple-100 text-purple-600' : 
-                  viewingItem.type === 'merchant' ? 'bg-teal-100 text-teal-600' : 
-                  'bg-orange-100 text-orange-600'
+                <div className={`p-2 rounded-xl bg-white shadow-sm ${
+                  viewingItem.type === 'category' ? 'text-purple-600' : viewingItem.type === 'merchant' ? 'text-teal-600' : 'text-blue-600'
                 }`}>
                   <Info size={20} />
                 </div>
-                <h3 className="text-lg font-black text-gray-800 uppercase tracking-tight">{viewingItem.type.charAt(0).toUpperCase() + viewingItem.type.slice(1)} Profile</h3>
+                <h3 className="text-lg font-black text-gray-800 uppercase tracking-tight">{viewingItem.type} profile</h3>
               </div>
-              <div className="flex items-center gap-2">
-                <button 
-                  onClick={() => { openEdit(viewingItem.type, activeViewingData); setViewingItem(null); }}
-                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-white rounded-lg transition-all"
-                >
-                  <Edit2 size={18} />
-                </button>
-                <button 
-                  onClick={() => setViewingItem(null)}
-                  className="p-2 text-gray-400 hover:text-rose-600 hover:bg-white rounded-lg transition-all"
-                >
-                  <X size={20} />
-                </button>
+              <div className="flex gap-2">
+                <button onClick={() => { openEdit(viewingItem.type, activeViewingData); setViewingItem(null); }} className="p-2 text-gray-400 hover:text-blue-600 transition-all"><Edit2 size={18} /></button>
+                <button onClick={() => setViewingItem(null)} className="p-2 text-gray-400 hover:text-rose-600 transition-all"><X size={20} /></button>
               </div>
             </div>
             
-            <div className="p-8 space-y-8 text-gray-900">
-              <div className="flex flex-col items-center text-center pb-6 border-b border-gray-100">
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Entity Name</p>
-                <h2 className="text-4xl font-black text-gray-900 uppercase tracking-tight">{activeViewingData.name}</h2>
+            <div className="p-8 space-y-8">
+              <div className="text-center">
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Entry Name</p>
+                <h2 className="text-3xl font-black text-gray-900 uppercase tracking-tight">{activeViewingData.name}</h2>
               </div>
 
               {viewingItem.type === 'category' && (
                 <div className="space-y-6">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Flow Type</p>
-                      <p className="text-sm font-black text-blue-600 uppercase tracking-tight">{(activeViewingData as Category).type || 'BOTH'}</p>
+                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Flow</p>
+                      <p className="text-sm font-black text-blue-600 uppercase">{(activeViewingData as Category).type}</p>
                     </div>
                     <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Volume</p>
-                      <p className="text-sm font-black text-gray-900">${(categoryStatsMap[activeViewingData.name.toLowerCase()] || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Volume</p>
+                      <p className="text-sm font-black text-gray-900">${(categoryStatsMap[activeViewingData.name.toLowerCase()] || 0).toFixed(2)}</p>
                     </div>
                   </div>
                   <div>
                     <div className="flex items-center justify-between mb-3 border-b border-gray-50 pb-2">
-                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1"><Layers size={10} /> Sub-Categories</p>
-                      {!isAddingSub && (
-                        <button 
-                          onClick={() => setIsAddingSub(true)} 
-                          className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg text-[9px] font-black uppercase transition-all"
-                        >
-                          <Plus size={12} /> Add New
-                        </button>
-                      )}
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Sub-Categories</p>
+                      <button onClick={() => setIsAddingSub(true)} className="text-[10px] font-black text-blue-600 uppercase">Add New</button>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {(activeViewingData as Category).subCategories?.map((s: string) => (
-                        <span key={s} className="group px-3 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-[11px] font-bold text-gray-700 flex items-center gap-2 hover:bg-white hover:shadow-sm transition-all">
-                          {renamingSub?.originalName === s ? (
-                            <div className="flex items-center gap-1">
-                              <input 
-                                autoFocus
-                                value={renamingSub.currentName}
-                                onChange={(e) => setRenamingSub({ ...renamingSub, currentName: e.target.value })}
-                                onKeyDown={(e) => e.key === 'Enter' && handleFinishRenameSub()}
-                                onBlur={handleFinishRenameSub}
-                                className="bg-white border border-gray-200 px-2 py-0.5 rounded outline-none text-[11px] font-bold text-blue-600 w-24"
-                              />
-                              <button onClick={handleFinishRenameSub} className="text-emerald-500"><Check size={12}/></button>
-                            </div>
-                          ) : (
-                            <>
-                              {s}
-                              <div className="flex items-center gap-1.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button 
-                                  onClick={(e) => { e.stopPropagation(); setRenamingSub({ originalName: s, currentName: s }); }} 
-                                  className="text-gray-400 hover:text-blue-600"
-                                >
-                                  <Edit2 size={12} />
-                                </button>
-                                <button 
-                                  onClick={(e) => { e.stopPropagation(); activeViewingData.id && onDeleteSubCategory(activeViewingData.id, s); }} 
-                                  className="text-gray-400 hover:text-rose-500"
-                                >
-                                  <Trash2 size={12} />
-                                </button>
-                              </div>
-                            </>
-                          )}
+                      {(activeViewingData as Category).subCategories?.map(s => (
+                        <span key={s} className="px-3 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-[11px] font-bold text-gray-700 flex items-center gap-2">
+                          {s}
+                          <div className="flex items-center gap-1.5 ml-1 border-l border-gray-200 pl-2">
+                            <button 
+                              onClick={() => activeViewingData.id && setMovingSubInfo({ catId: activeViewingData.id, subName: s })} 
+                              className="text-gray-400 hover:text-blue-500 transition-colors"
+                              title="Move to another category"
+                            >
+                              <ArrowRightLeft size={12} />
+                            </button>
+                            <button onClick={() => activeViewingData.id && onDeleteSubCategory(activeViewingData.id, s)} className="text-gray-400 hover:text-rose-500 transition-colors"><Trash2 size={12} /></button>
+                          </div>
                         </span>
                       ))}
-                      {(activeViewingData as Category).subCategories?.length === 0 && !isAddingSub && (
-                        <p className="text-[10px] font-medium text-gray-300 italic py-2">No sub-categories defined yet.</p>
-                      )}
                       {isAddingSub && (
-                        <div className="flex items-center gap-1 bg-white border-2 border-blue-100 rounded-xl px-2.5 py-1.5 shadow-md animate-in slide-in-from-left-1">
-                          <input 
-                            autoFocus 
-                            value={newSubName} 
-                            onChange={(e) => setNewSubName(e.target.value)} 
-                            onKeyDown={(e) => e.key === 'Enter' && handleAddSub()} 
-                            onBlur={() => !newSubName.trim() && setIsAddingSub(false)}
-                            className="text-[11px] font-bold outline-none w-32 bg-white text-gray-900 placeholder:text-gray-300" 
-                            placeholder="Enter name..." 
-                          />
-                          <button onClick={handleAddSub} className="p-1 text-emerald-600 hover:bg-emerald-50 rounded-lg"><Check size={14} /></button>
-                          <button onClick={() => { setIsAddingSub(false); setNewSubName(''); }} className="p-1 text-gray-400 hover:bg-gray-50 rounded-lg"><X size={14} /></button>
+                        <div className="flex items-center gap-1 bg-white border border-blue-200 rounded-xl px-2 py-1 shadow-sm">
+                          <input autoFocus value={newSubName} onChange={(e) => setNewSubName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAddSub()} className="text-[11px] font-bold outline-none w-24" placeholder="..." />
+                          <button onClick={handleAddSub} className="text-emerald-600"><Check size={14}/></button>
                         </div>
                       )}
                     </div>
@@ -502,357 +650,173 @@ const Management: React.FC<ManagementProps> = ({
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
                       <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Visits</p>
-                      <p className="text-sm font-black text-gray-900">{(merchantStatsMap[activeViewingData.name.toLowerCase()] as any)?.count || 0}</p>
+                      <p className="text-sm font-black text-gray-900">{merchantStatsMap[activeViewingData.name.toLowerCase()]?.count || 0}</p>
                     </div>
                     <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Last Seen</p>
-                      <p className="text-sm font-black text-gray-900">{(merchantStatsMap[activeViewingData.name.toLowerCase()] as any)?.lastDate || 'Never'}</p>
+                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Total</p>
+                      <p className="text-sm font-black text-emerald-600">${(merchantStatsMap[activeViewingData.name.toLowerCase()]?.total || 0).toFixed(2)}</p>
                     </div>
                   </div>
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3 text-sm font-bold text-gray-600">
-                      <MapPin size={16} className="text-rose-500" /> {(activeViewingData as Merchant).location || 'No location set'}
-                    </div>
-                    <div className="flex items-center gap-3 text-sm font-bold text-gray-600">
-                      <Phone size={16} className="text-emerald-500" /> {(activeViewingData as Merchant).phone || 'No phone set'}
-                    </div>
-                    {(activeViewingData as Merchant).website && (
-                      <a href={(activeViewingData as Merchant).website} target="_blank" rel="noreferrer" className="flex items-center gap-3 text-sm font-black text-blue-600 hover:underline">
-                        <Globe size={16} /> Website <ExternalLink size={12} />
-                      </a>
-                    )}
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3 text-sm text-gray-600"><MapPin size={16} className="text-blue-500" /> {(activeViewingData as Merchant).location || 'No location set'}</div>
                   </div>
-                  <button 
-                    onClick={() => { onViewMerchantTransactions?.(activeViewingData.name); setViewingItem(null); }}
-                    className="w-full py-3 bg-indigo-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-[0.98]"
-                  >
-                    <ListOrdered size={14} /> View History
+                  <button onClick={() => onViewMerchantTransactions?.(activeViewingData.name)} className="w-full py-4 bg-gray-900 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2">
+                    <ListOrdered size={16} /> View History
                   </button>
                 </div>
               )}
 
               {viewingItem.type === 'payment' && (
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 text-center">
-                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Volume</p>
-                    <h5 className="text-xl font-black text-emerald-600">${(paymentStatsMap[activeViewingData.name.toLowerCase()]?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h5>
+                <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100 text-center">
+                  <div className="w-12 h-12 rounded-2xl mx-auto mb-4 flex items-center justify-center text-white shadow-lg" style={{ backgroundColor: (activeViewingData as PaymentMethod).color || '#3B82F6' }}>
+                    <CreditCard size={24} />
                   </div>
-                  <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 text-center">
-                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Frequency</p>
-                    <h5 className="text-xl font-black text-blue-600">{paymentStatsMap[activeViewingData.name.toLowerCase()]?.count || 0} Transactions</h5>
-                  </div>
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Cleared</p>
+                  <h4 className="text-2xl font-black text-gray-900">${(paymentStatsMap[activeViewingData.name.toLowerCase()]?.total || 0).toLocaleString()}</h4>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-2">{paymentStatsMap[activeViewingData.name.toLowerCase()]?.count || 0} Transactions</p>
                 </div>
               )}
 
               <div className="flex flex-col gap-3 pt-4">
-                <button 
-                  onClick={() => { setDeletingItem({ type: viewingItem.type, id: activeViewingData.id!, name: activeViewingData.name }); setViewingItem(null); }}
-                  className="w-full py-4 bg-rose-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 hover:bg-rose-700 transition-all active:scale-[0.98]"
-                >
-                  <Trash2 size={14} /> Delete {viewingItem.type}
-                </button>
-                <button 
-                  onClick={() => setViewingItem(null)}
-                  className="w-full py-4 bg-gray-100 text-gray-500 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-all active:scale-[0.98]"
-                >
-                  Dismiss
-                </button>
+                <button onClick={() => { setDeletingItem({ type: viewingItem.type, id: activeViewingData.id!, name: activeViewingData.name }); setViewingItem(null); }} className="w-full py-4 bg-rose-50 text-rose-600 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-rose-100 transition-all">Delete {viewingItem.type}</button>
+                <button onClick={() => setViewingItem(null)} className="w-full py-4 bg-gray-100 text-gray-500 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-all">Dismiss</button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Universal Edit Modal */}
-      {editingItem && editingItem.type !== 'subCategory' && (
-        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4" onClick={() => setEditingItem(null)}>
-          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-gray-100 overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
-              <h3 className="font-black text-gray-800 uppercase tracking-tight text-xs flex items-center gap-2">
-                <Edit2 size={14} /> {editingItem.data.id === undefined ? 'Add New' : 'Edit'} {editingItem.type}
-              </h3>
-              <button onClick={() => setEditingItem(null)} className="p-2 text-gray-400 hover:bg-gray-100 rounded-full"><X size={18} /></button>
-            </div>
-            <div className="p-6 space-y-5">
-              <div>
-                <label className="block text-[10px] font-black text-gray-400 uppercase mb-1.5 ml-1">Label Name</label>
-                <input 
-                  autoFocus 
-                  value={editName} 
-                  onChange={(e) => setEditName(e.target.value)} 
-                  placeholder="Required..."
-                  className={`w-full px-4 py-3 bg-white border ${!editName.trim() ? 'border-rose-200' : 'border-gray-200'} rounded-xl font-bold text-gray-900 focus:ring-2 focus:ring-blue-100 outline-none transition-all`} 
-                />
-                {!editName.trim() && <p className="text-[9px] font-bold text-rose-400 mt-1.5 ml-1 uppercase">Field is required</p>}
-              </div>
-
-              {editingItem.type === 'category' && (
-                <div>
-                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-1.5 ml-1">Type</label>
-                  <div className="flex bg-gray-100 p-1 rounded-xl">
-                    {[TransactionType.EXPENSE, TransactionType.INCOME, TransactionType.BOTH].map(t => (
-                      <button key={t} onClick={() => setEditType(t)} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${editType === t ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400'}`}>
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {editingItem.type === 'merchant' && (
-                <>
-                  <div>
-                    <label className="block text-[10px] font-black text-gray-400 uppercase mb-1.5 ml-1">Location</label>
-                    <div className="relative">
-                      <MapPin size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" />
-                      <input placeholder="e.g. New York, NY" value={editLocation} onChange={(e) => setEditLocation(e.target.value)} className="w-full pl-11 pr-4 py-3 bg-white border border-gray-200 rounded-xl font-bold text-gray-900 focus:ring-2 focus:ring-blue-100 outline-none transition-all" />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-black text-gray-400 uppercase mb-1.5 ml-1">Contact Phone</label>
-                    <div className="relative">
-                      <Phone size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" />
-                      <input placeholder="e.g. +1 (555) 000-0000" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} className="w-full pl-11 pr-4 py-3 bg-white border border-gray-200 rounded-xl font-bold text-gray-900 focus:ring-2 focus:ring-blue-100 outline-none transition-all" />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-black text-gray-400 uppercase mb-1.5 ml-1">Website</label>
-                    <div className="relative">
-                      <Globe size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" />
-                      <input placeholder="e.g. https://example.com" value={editWebsite} onChange={(e) => setEditWebsite(e.target.value)} className="w-full pl-11 pr-4 py-3 bg-white border border-gray-200 rounded-xl font-bold text-gray-900 focus:ring-2 focus:ring-blue-100 outline-none transition-all" />
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-            <div className="p-4 bg-gray-50 border-t border-gray-100 flex gap-3">
-              <button onClick={() => setEditingItem(null)} className="flex-1 py-3 font-black uppercase text-[10px] tracking-widest text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">Cancel</button>
-              <button 
-                onClick={handleSave} 
-                disabled={!editName.trim()}
-                className={`flex-1 py-3 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-blue-50 transition-all ${!editName.trim() ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-blue-600 hover:bg-blue-700'}`}
-              >
-                Save Changes
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation */}
-      {deletingItem && (
-        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[300] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-sm rounded-2xl p-8 text-center border border-gray-100 shadow-2xl">
-            <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-6">
-              <AlertCircle size={32} />
-            </div>
-            <h3 className="text-xl font-black uppercase mb-2 text-gray-900">Delete {deletingItem.type}?</h3>
-            <p className="text-sm text-gray-500 mb-8 leading-relaxed">
-              Are you sure you want to remove <span className="font-bold text-gray-800">"{deletingItem.name}"</span>?
-            </p>
-            <div className="flex gap-3">
-              <button onClick={() => setDeletingItem(null)} className="flex-1 py-3 rounded-xl bg-gray-100 font-black uppercase text-[10px] tracking-widest">Cancel</button>
-              <button onClick={confirmDelete} className="flex-1 py-3 rounded-xl bg-rose-600 text-white font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-100">Delete</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Main Views */}
+      {/* Main Mode Views */}
       {mode === 'categories' && (
         <div className="space-y-4">
-          <ManagementHeader title="Categories" icon={Tags} addLabel="ADD NEW" buttonColor="#7C3AED" onAdd={handleAddNew}
-            searchValue={searchValue} onSearchChange={setSearchValue} searchPlaceholder="Search categories..."
-          />
+          <ManagementHeader title="Categories" icon={Tags} addLabel="ADD NEW" buttonColor="#7C3AED" onAdd={handleAddNew} searchValue={searchValue} onSearchChange={setSearchValue} searchPlaceholder="Search categories..." selectionCount={selectedIds.size} onMerge={() => setMergingItem({ ids: Array.from(selectedIds), type: 'category' })} />
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)]">
-              <table className="w-full text-left border-collapse min-w-[800px]">
-                <thead className="sticky top-0 z-10">
-                  <tr className="bg-gray-50 border-b border-gray-100 text-[9px] font-black text-gray-400 uppercase tracking-widest">
-                    <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => handleSort('name')}>
-                      <div className="flex items-center">Category Name <SortIndicator columnKey="name" /></div>
-                    </th>
-                    <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => handleSort('type')}>
-                      <div className="flex items-center">Type <SortIndicator columnKey="type" /></div>
-                    </th>
-                    <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => handleSort('count')}>
-                      <div className="flex items-center">Sub-Categories <SortIndicator columnKey="count" /></div>
-                    </th>
-                    <th className="px-6 py-4 text-right cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => handleSort('spend')}>
-                      <div className="flex items-center justify-end">Total Volume <SortIndicator columnKey="spend" /></div>
-                    </th>
-                    <th className="px-6 py-4 text-right cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => handleSort('spend')}>
-                      <div className="flex items-center justify-end">Percentage (%) <SortIndicator columnKey="spend" /></div>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {filteredAndSortedItems.map(cat => {
-                    const spend = categoryStatsMap[cat.name.toLowerCase()] || 0;
-                    const perc = totalCategoriesSum > 0 ? (spend / totalCategoriesSum) * 100 : 0;
-                    return (
-                      <tr key={cat.id} className="hover:bg-blue-50/20 group transition-colors cursor-pointer" onClick={() => setViewingItem({ type: 'category', id: cat.id! })}>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <Tag size={14} style={{ color: '#7C3AED' }} />
-                            <span className="font-black text-gray-900 uppercase tracking-tight text-xs">{cat.name}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${cat.type === 'INCOME' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-500'}`}>{cat.type || 'EXPENSE'}</span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{cat.subCategories?.length || 0} Units</span>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <span className="text-sm font-black text-gray-900">${spend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <span className="text-[10px] font-black text-blue-500 bg-blue-50 px-2 py-1 rounded">{perc.toFixed(1)}%</span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <table className="w-full text-left">
+              <thead className="bg-gray-50 text-[9px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                <tr>
+                  <th className="px-6 py-4 w-12 text-center">#</th>
+                  <th className="px-6 py-4 cursor-pointer" onClick={() => handleSort('name')}>Category <SortIndicator columnKey="name" /></th>
+                  <th className="px-6 py-4">Flow</th>
+                  <th className="px-6 py-4">Subs</th>
+                  <th className="px-6 py-4 text-right cursor-pointer" onClick={() => handleSort('spend')}>Volume <SortIndicator columnKey="spend" /></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {filteredAndSortedItems.map(cat => {
+                  const spend = categoryStatsMap[cat.name.toLowerCase()] || 0;
+                  const isSelected = selectedIds.has(cat.id!);
+                  return (
+                    <tr key={cat.id} className={`hover:bg-blue-50/20 group transition-colors cursor-pointer ${isSelected ? 'bg-indigo-50/40' : ''}`} onClick={() => setViewingItem({ type: 'category', id: cat.id! })}>
+                      <td className="px-6 py-4" onClick={(e) => { e.stopPropagation(); toggleSelect(cat.id!); }}>
+                        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-200'}`}>{isSelected && <Check size={12} />}</div>
+                      </td>
+                      <td className="px-6 py-4 font-black text-gray-900 uppercase text-xs">{cat.name}</td>
+                      <td className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase">{cat.type || 'EXPENSE'}</td>
+                      <td className="px-6 py-4 text-[10px] font-bold text-gray-400">{cat.subCategories?.length || 0}</td>
+                      <td className="px-6 py-4 text-right font-black text-gray-900">${spend.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
       {mode === 'merchants' && (
         <div className="space-y-4">
-          <ManagementHeader title="Payees & Merchants" icon={Store} addLabel="ADD NEW" buttonColor="#0D9488" onAdd={handleAddNew}
-            searchValue={searchValue} onSearchChange={setSearchValue} searchPlaceholder="Search merchants..."
-          />
+          <ManagementHeader title="Payees & Merchants" icon={Store} addLabel="ADD NEW" buttonColor="#0D9488" onAdd={handleAddNew} searchValue={searchValue} onSearchChange={setSearchValue} searchPlaceholder="Search merchants..." selectionCount={selectedIds.size} onMerge={() => setMergingItem({ ids: Array.from(selectedIds), type: 'merchant' })} />
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)]">
-              <table className="w-full text-left border-collapse min-w-[800px]">
-                <thead className="sticky top-0 z-10">
-                  <tr className="bg-gray-50 border-b border-gray-100 text-[9px] font-black text-gray-400 uppercase tracking-widest">
-                    <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => handleSort('name')}>
-                      <div className="flex items-center">Payee Name <SortIndicator columnKey="name" /></div>
-                    </th>
-                    <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => handleSort('count')}>
-                      <div className="flex items-center">Visit Count <SortIndicator columnKey="count" /></div>
-                    </th>
-                    <th className="px-6 py-4 text-right cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => handleSort('spend')}>
-                      <div className="flex items-center justify-end">Total Spend <SortIndicator columnKey="spend" /></div>
-                    </th>
-                    <th className="px-6 py-4 text-right cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => handleSort('spend')}>
-                      <div className="flex items-center justify-end">Weight (%) <SortIndicator columnKey="spend" /></div>
-                    </th>
-                    <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => handleSort('lastVisit')}>
-                      <div className="flex items-center">Last Visit <SortIndicator columnKey="lastVisit" /></div>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {filteredAndSortedItems.map(m => {
-                    const stats = (merchantStatsMap[m.name.toLowerCase()] as any) || { total: 0, count: 0, lastDate: null };
-                    const perc = totalMerchantsSum > 0 ? (stats.total / totalMerchantsSum) * 100 : 0;
-                    return (
-                      <tr key={m.id} className="hover:bg-blue-50/20 group transition-colors cursor-pointer" onClick={() => setViewingItem({ type: 'merchant', id: m.id! })}>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <Store size={14} style={{ color: '#0D9488' }} />
-                            <span className="font-black text-gray-900 uppercase tracking-tight text-xs">{m.name}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{stats.count} Visits</span>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <span className="text-sm font-black text-gray-900">${stats.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <span className="text-[10px] font-black text-emerald-500 bg-emerald-50 px-2 py-1 rounded">{perc.toFixed(1)}%</span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className="text-[10px] font-bold text-gray-400 uppercase">{stats.lastDate || '-'}</span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <table className="w-full text-left">
+              <thead className="bg-gray-50 text-[9px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                <tr>
+                  <th className="px-6 py-4 w-12 text-center">#</th>
+                  <th className="px-6 py-4 cursor-pointer" onClick={() => handleSort('name')}>Payee Name <SortIndicator columnKey="name" /></th>
+                  <th className="px-6 py-4 cursor-pointer" onClick={() => handleSort('count')}>Visits <SortIndicator columnKey="count" /></th>
+                  <th className="px-6 py-4 text-right cursor-pointer" onClick={() => handleSort('spend')}>Spend <SortIndicator columnKey="spend" /></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {filteredAndSortedItems.map(m => {
+                  const stats = merchantStatsMap[m.name.toLowerCase()] || { total: 0, count: 0 };
+                  const isSelected = selectedIds.has(m.id!);
+                  return (
+                    <tr key={m.id} className={`hover:bg-blue-50/20 group transition-colors cursor-pointer ${isSelected ? 'bg-indigo-50/40' : ''}`} onClick={() => setViewingItem({ type: 'merchant', id: m.id! })}>
+                      <td className="px-6 py-4" onClick={(e) => { e.stopPropagation(); toggleSelect(m.id!); }}>
+                        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-200'}`}>{isSelected && <Check size={12} />}</div>
+                      </td>
+                      <td className="px-6 py-4 font-black text-gray-900 uppercase text-xs">{m.name}</td>
+                      <td className="px-6 py-4 text-[10px] font-bold text-gray-400">{stats.count} Visits</td>
+                      <td className="px-6 py-4 text-right font-black text-gray-900">${stats.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
       {mode === 'payments' && (
         <div className="space-y-4">
-          <ManagementHeader title="Payment Methods" icon={CreditCard} addLabel="ADD NEW" buttonColor="#EA580C" onAdd={handleAddNew}
-            searchValue={searchValue} onSearchChange={setSearchValue} searchPlaceholder="Search payment methods..."
-          />
+          <ManagementHeader title="Payment Methods" icon={CreditCard} addLabel="ADD NEW" buttonColor="#2563EB" onAdd={handleAddNew} searchValue={searchValue} onSearchChange={setSearchValue} searchPlaceholder="Search accounts..." />
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)]">
-              <table className="w-full text-left border-collapse min-w-[800px]">
-                <thead className="sticky top-0 z-10">
-                  <tr className="bg-gray-50 border-b border-gray-100 text-[9px] font-black text-gray-400 uppercase tracking-widest">
-                    <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => handleSort('name')}>
-                      <div className="flex items-center">Method Name <SortIndicator columnKey="name" /></div>
-                    </th>
-                    <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => handleSort('count')}>
-                      <div className="flex items-center">Transaction Count <SortIndicator columnKey="count" /></div>
-                    </th>
-                    <th className="px-6 py-4 text-right cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => handleSort('spend')}>
-                      <div className="flex items-center justify-end">Total Volume <SortIndicator columnKey="spend" /></div>
-                    </th>
-                    <th className="px-6 py-4 text-right cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => handleSort('spend')}>
-                      <div className="flex items-center justify-end">Volume Share (%) <SortIndicator columnKey="spend" /></div>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {filteredAndSortedItems.map(p => {
-                    const stats = paymentStatsMap[p.name.toLowerCase()] || { total: 0, count: 0 };
-                    const perc = totalPaymentsSum > 0 ? (stats.total / totalPaymentsSum) * 100 : 0;
-                    return (
-                      <tr key={p.id} className="hover:bg-blue-50/20 group transition-colors cursor-pointer" onClick={() => setViewingItem({ type: 'payment', id: p.id! })}>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <CreditCard size={14} style={{ color: '#EA580C' }} />
-                            <span className="font-black text-gray-900 uppercase tracking-tight text-xs">{p.name}</span>
+            <table className="w-full text-left">
+              <thead className="bg-gray-50 text-[9px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                <tr>
+                  <th className="px-6 py-4">Account Name</th>
+                  <th className="px-6 py-4 cursor-pointer" onClick={() => handleSort('count')}>Activity <SortIndicator columnKey="count" /></th>
+                  <th className="px-6 py-4 text-right cursor-pointer" onClick={() => handleSort('spend')}>Total Cleared <SortIndicator columnKey="spend" /></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {filteredAndSortedItems.map(p => {
+                  const stats = paymentStatsMap[p.name.toLowerCase()] || { total: 0, count: 0 };
+                  return (
+                    <tr key={p.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => setViewingItem({ type: 'payment', id: p.id! })}>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-[10px] font-black uppercase" style={{ backgroundColor: p.color || '#3B82F6' }}>
+                            <CreditCard size={14} />
                           </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{stats.count} Records</span>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <span className="text-sm font-black text-gray-900">${stats.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <span className="text-[10px] font-black text-indigo-500 bg-indigo-50 px-2 py-1 rounded">{perc.toFixed(1)}%</span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          <span className="font-black text-gray-900 uppercase text-xs">{p.name}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-[10px] font-bold text-gray-400">{stats.count} Items</td>
+                      <td className="px-6 py-4 text-right font-black text-gray-900">${stats.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
       {mode === 'backups' && (
-        <div className="bg-white p-12 rounded-3xl border border-gray-100 shadow-xl max-w-2xl text-center mx-auto mt-10">
-          <div className="w-20 h-20 bg-amber-50 text-amber-500 rounded-2xl flex items-center justify-center mx-auto mb-8 shadow-inner">
-            <Database size={40} />
-          </div>
-          <h3 className="text-2xl font-black uppercase mb-3 tracking-tight text-gray-900">System Backup & Recovery</h3>
-          <p className="text-gray-500 text-sm mb-10 leading-relaxed px-10">
-            Export your history as a secure JSON file. Restoration will overwrite your current local database.
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <button onClick={onExport} className="py-4 bg-gray-900 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-3 hover:bg-black transition-all">
-              <Download size={18}/> Export Dataset
-            </button>
-            <button onClick={() => document.getElementById('import-file')?.click()} className="py-4 border-2 border-dashed border-gray-200 rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-3 hover:border-blue-300 hover:text-blue-600 transition-all text-gray-500">
-              <Upload size={18}/> Restore Dataset
-            </button>
-            <input id="import-file" type="file" className="hidden" onChange={(e) => e.target.files?.[0] && onImport(e.target.files[0])} />
+        <div className="space-y-6">
+          <ManagementHeader title="Data Management" icon={Database} />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-4">
+              <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mb-6 shadow-inner"><Download size={28} /></div>
+              <h4 className="text-xl font-black text-gray-900 uppercase tracking-tight">Export Repository</h4>
+              <p className="text-sm text-gray-400 leading-relaxed">Download a complete snapshot of your ledger, categories, and settings as a JSON file. This can be used for local backups or migrating data.</p>
+              <button onClick={onExport} className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-indigo-100 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"><Download size={16} /> Save JSON Export</button>
+            </div>
+            
+            <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-4">
+              <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mb-6 shadow-inner"><Upload size={28} /></div>
+              <h4 className="text-xl font-black text-gray-900 uppercase tracking-tight">Restore Snapshot</h4>
+              <p className="text-sm text-gray-400 leading-relaxed">Upload a previously exported JSON file to restore your entire database. <span className="text-rose-500 font-bold">WARNING: This will overwrite all current local data.</span></p>
+              <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  onImport(file);
+                  e.target.value = '';
+                }
+              }} />
+              <button onClick={() => fileInputRef.current?.click()} className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-emerald-100 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"><Upload size={16} /> Upload & Restore</button>
+            </div>
           </div>
         </div>
       )}

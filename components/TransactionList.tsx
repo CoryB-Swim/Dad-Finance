@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Transaction, TransactionType, Category, Merchant, PaymentMethod } from '../types';
+import { Transaction, TransactionType, Category, Merchant, PaymentMethod, DraftStatement } from '../types';
 import { 
   Search, 
   Trash2, 
@@ -30,7 +30,11 @@ import {
   AlertTriangle,
   Sparkles,
   CheckCircle,
-  ChevronDown
+  ChevronDown,
+  ShieldCheck,
+  Clock,
+  Check,
+  GitMerge
 } from 'lucide-react';
 import TransactionForm from './TransactionForm';
 
@@ -39,10 +43,12 @@ interface TransactionListProps {
   categories: Category[];
   merchants: Merchant[];
   paymentMethods: PaymentMethod[];
+  drafts?: DraftStatement[];
   onDelete: (id: number) => void;
   onDeleteMultiple?: (ids: number[]) => void;
   onAddTransaction: (t: Transaction) => void;
   onUpdateTransaction: (t: Transaction) => void;
+  onBulkUpdateTransactions?: (updates: Transaction[]) => void;
   onAddCategory: (c: Category) => void;
   onUpdateCategory: (c: Category) => void;
   onAddMerchant: (m: Merchant) => void;
@@ -71,10 +77,12 @@ const TransactionList: React.FC<TransactionListProps> = ({
   categories, 
   merchants,
   paymentMethods,
+  drafts = [],
   onDelete,
   onDeleteMultiple,
   onAddTransaction,
   onUpdateTransaction,
+  onBulkUpdateTransactions,
   onAddCategory,
   onUpdateCategory,
   onAddMerchant,
@@ -97,8 +105,13 @@ const TransactionList: React.FC<TransactionListProps> = ({
   const [viewingTransaction, setViewingTransaction] = useState<Transaction | null>(null);
   const [deletingTransaction, setDeletingTransaction] = useState<Transaction | null>(null);
   const [isCleaningDuplicates, setIsCleaningDuplicates] = useState(false);
-  
   const [showOnlyDuplicates, setShowOnlyDuplicates] = useState(false);
+
+  // Multi-select state
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [isBatchEditing, setIsBatchEditing] = useState(false);
+  const [batchField, setBatchField] = useState<string>('category');
+  const [batchValue, setBatchValue] = useState<string>('');
   
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
@@ -149,11 +162,9 @@ const TransactionList: React.FC<TransactionListProps> = ({
   const datePresets = useMemo(() => {
     const todayStr = getLocalDateString();
     const now = new Date();
-    
     const day = now.getDay(); 
     const diff = now.getDate() - day + (day === 0 ? -6 : 1); 
     const monday = new Date(new Date(now).setDate(diff));
-    
     return {
       today: { start: todayStr, end: todayStr },
       week: { 
@@ -194,15 +205,8 @@ const TransactionList: React.FC<TransactionListProps> = ({
       setEndDate('');
       return;
     }
-    const newStart = `${year}-01-01`;
-    const newEnd = `${year}-12-31`;
-    if (startDate === newStart && endDate === newEnd) {
-      setStartDate('');
-      setEndDate('');
-    } else {
-      setStartDate(newStart);
-      setEndDate(newEnd);
-    }
+    setStartDate(`${year}-01-01`);
+    setEndDate(`${year}-12-31`);
   };
 
   const currentSelectedYear = useMemo(() => {
@@ -212,29 +216,24 @@ const TransactionList: React.FC<TransactionListProps> = ({
   const autocompleteSuggestions = useMemo(() => {
     if (!inputValue.trim()) return [];
     const query = inputValue.toLowerCase().trim();
-    
     const groups: { type: FilterScope; items: string[] }[] = [
       { type: 'category', items: [] },
       { type: 'sub', items: [] },
       { type: 'merchant', items: [] },
       { type: 'payment', items: [] }
     ];
-
     categories.forEach(c => {
       if (c.name.toLowerCase().includes(query)) groups[0].items.push(c.name);
       c.subCategories?.forEach(s => {
         if (s.toLowerCase().includes(query)) groups[1].items.push(s);
       });
     });
-
     merchants.forEach(m => {
       if (m.name.toLowerCase().includes(query)) groups[2].items.push(m.name);
     });
-
     paymentMethods.forEach(p => {
       if (p.name.toLowerCase().includes(query)) groups[3].items.push(p.name);
     });
-
     return groups.map(group => ({
       ...group,
       items: Array.from(new Set(group.items))
@@ -246,13 +245,10 @@ const TransactionList: React.FC<TransactionListProps> = ({
   const duplicateInfo = useMemo(() => {
     const groups: Record<string, Transaction[]> = {};
     transactions.forEach(t => {
-      // Fingerprint now includes all relevant transaction data to strictly identify exact duplicates
-      // including Notes (description), subCategory, and paymentMethod as requested.
       const fingerprint = `${t.date}|${t.amount}|${t.merchant || ''}|${t.category}|${t.subCategory || ''}|${t.type}|${t.paymentMethod || ''}|${t.description || ''}`;
       if (!groups[fingerprint]) groups[fingerprint] = [];
       groups[fingerprint].push(t);
     });
-
     const duplicateIds = new Set<number>();
     const allFlaggedIds = new Set<number>();
     Object.values(groups).forEach(group => {
@@ -266,8 +262,14 @@ const TransactionList: React.FC<TransactionListProps> = ({
         });
       }
     });
-    return { deleteList: Array.from(duplicateIds), flaggedIds: allFlaggedIds, totalPairs: Object.values(groups).filter(g => g.length > 1).length };
+    return { deleteList: Array.from(duplicateIds), flaggedIds: allFlaggedIds };
   }, [transactions]);
+
+  const draftTransactionsMap = useMemo(() => {
+    const map = new Set<number>();
+    drafts.forEach(d => d.transactionIds.forEach(id => map.add(id)));
+    return map;
+  }, [drafts]);
 
   const filteredTransactions = useMemo(() => {
     let result = transactions.filter(t => {
@@ -282,7 +284,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
           default: return false;
         }
       });
-
       const matchesType = typeFilter === 'ALL' || t.type === typeFilter;
       const matchesStartDate = !startDate || t.date >= startDate;
       const matchesEndDate = !endDate || t.date <= endDate;
@@ -290,7 +291,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
       if (showOnlyDuplicates && t.id) matchesDuplicates = duplicateInfo.flaggedIds.has(t.id);
       return matchesPills && matchesType && matchesStartDate && matchesEndDate && matchesDuplicates;
     });
-
     result.sort((a, b) => {
       if (sortConfig.key === 'amount') {
         return sortConfig.direction === 'asc' ? a.amount - b.amount : b.amount - a.amount;
@@ -315,11 +315,41 @@ const TransactionList: React.FC<TransactionListProps> = ({
 
   const toggleSort = (key: SortKey) => setSortConfig(p => ({ key, direction: p.key === key && p.direction === 'asc' ? 'desc' : 'asc' }));
 
-  const handleCleanDuplicates = () => {
-    if (onDeleteMultiple && duplicateInfo.deleteList.length > 0) {
-      onDeleteMultiple(duplicateInfo.deleteList);
-      setIsCleaningDuplicates(false);
-      setShowOnlyDuplicates(false);
+  const toggleSelect = (id: number, event: React.MouseEvent) => {
+    event.stopPropagation();
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredTransactions.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredTransactions.map(t => t.id!).filter(Boolean)));
+    }
+  };
+
+  const handleBatchUpdate = () => {
+    if (!onBulkUpdateTransactions || selectedIds.size === 0) return;
+    
+    const updates = transactions
+      .filter(t => t.id && selectedIds.has(t.id))
+      .map(t => ({
+        ...t,
+        [batchField]: batchValue
+      }));
+    
+    onBulkUpdateTransactions(updates);
+    setIsBatchEditing(false);
+    setSelectedIds(new Set());
+  };
+
+  const handleBatchDelete = () => {
+    if (onDeleteMultiple && selectedIds.size > 0) {
+      onDeleteMultiple(Array.from(selectedIds));
+      setSelectedIds(new Set());
     }
   };
 
@@ -329,7 +359,122 @@ const TransactionList: React.FC<TransactionListProps> = ({
   };
 
   return (
-    <div className="space-y-4 animate-in fade-in duration-500 pb-20">
+    <div className="space-y-4 animate-in fade-in duration-500 pb-20 relative">
+      {/* Batch Action Bar */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] w-full max-w-2xl px-4 animate-in slide-in-from-bottom-4 duration-300">
+          <div className="bg-gray-900 text-white p-4 rounded-3xl shadow-2xl border border-gray-800 flex items-center justify-between backdrop-blur-md bg-opacity-95">
+            <div className="flex items-center gap-4 ml-2">
+              <div className="bg-blue-600 text-white w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs">
+                {selectedIds.size}
+              </div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Selected Entries</p>
+                <p className="text-xs font-bold text-white">Perform bulk operation</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setIsBatchEditing(true)}
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2"
+              >
+                <Edit2 size={14} /> Batch Edit
+              </button>
+              <button 
+                onClick={handleBatchDelete}
+                className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2"
+              >
+                <Trash2 size={14} /> Delete
+              </button>
+              <button 
+                onClick={() => setSelectedIds(new Set())}
+                className="p-2.5 text-gray-400 hover:text-white rounded-xl transition-all"
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Batch Edit Modal */}
+      {isBatchEditing && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-[32px] shadow-2xl border border-gray-100 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-8 border-b border-gray-50 bg-blue-50/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-600 text-white rounded-xl"><Edit2 size={20} /></div>
+                <h3 className="text-xl font-black text-gray-800 uppercase tracking-tight">Batch Property Edit</h3>
+              </div>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-2">Updating {selectedIds.size} selected transactions</p>
+            </div>
+            <div className="p-8 space-y-6">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Target Field</label>
+                <select 
+                  value={batchField}
+                  onChange={(e) => {
+                    setBatchField(e.target.value);
+                    setBatchValue('');
+                  }}
+                  className="w-full h-12 px-4 bg-gray-50 border border-gray-100 rounded-xl font-bold text-gray-900 outline-none focus:ring-4 focus:ring-blue-100 transition-all cursor-pointer appearance-none"
+                >
+                  <option value="category">Category</option>
+                  <option value="subCategory">Sub-Category</option>
+                  <option value="merchant">Payee / Merchant</option>
+                  <option value="paymentMethod">Payment Method</option>
+                  <option value="date">Date</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">New Value</label>
+                {batchField === 'date' ? (
+                  <input 
+                    type="date"
+                    value={batchValue}
+                    onChange={(e) => setBatchValue(e.target.value)}
+                    className="w-full h-12 px-4 bg-gray-50 border border-gray-100 rounded-xl font-bold text-gray-900 outline-none"
+                  />
+                ) : (
+                  <input 
+                    type="text"
+                    list={`batch-${batchField}-suggestions`}
+                    value={batchValue}
+                    onChange={(e) => setBatchValue(e.target.value)}
+                    placeholder={`Enter new ${batchField}...`}
+                    className="w-full h-12 px-4 bg-gray-50 border border-gray-100 rounded-xl font-bold text-gray-900 outline-none"
+                  />
+                )}
+                <datalist id={`batch-category-suggestions`}>{categories.map(c => <option key={c.id} value={c.name} />)}</datalist>
+                <datalist id={`batch-merchant-suggestions`}>{merchants.map(m => <option key={m.id} value={m.name} />)}</datalist>
+                <datalist id={`batch-paymentMethod-suggestions`}>{paymentMethods.map(p => <option key={p.id} value={p.name} />)}</datalist>
+              </div>
+
+              <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 flex items-start gap-3">
+                <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-[10px] font-bold text-amber-700 uppercase leading-relaxed">
+                  This will overwrite the <span className="font-black underline">{batchField}</span> property for all selected items. Other details like amount and notes will remain untouched.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3 pt-2">
+                <button 
+                  onClick={handleBatchUpdate}
+                  disabled={!batchValue.trim()}
+                  className={`w-full h-14 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl transition-all ${
+                    batchValue.trim() ? 'bg-blue-600 text-white shadow-blue-100 hover:bg-blue-700 active:scale-[0.98]' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  Apply to {selectedIds.size} Records
+                </button>
+                <button onClick={() => setIsBatchEditing(false)} className="w-full h-12 text-gray-500 font-black uppercase text-[10px] tracking-widest">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {duplicateInfo.deleteList.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 animate-in slide-in-from-top duration-500">
           <div className="flex items-center gap-4 text-center md:text-left">
@@ -392,11 +537,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
                 </h2>
                 <div className={`mt-2 flex items-center gap-2 font-bold text-xs ${viewingTransaction.fromTemplate ? 'text-rose-600' : 'text-gray-400'}`}>
                   <Calendar size={14} /> {viewingTransaction.date}
-                  {viewingTransaction.fromTemplate && (
-                    <span className="flex items-center gap-1 ml-1 text-[9px] px-1.5 py-0.5 bg-rose-50 rounded border border-rose-100 uppercase tracking-tighter">
-                      <Repeat size={10} /> Recurring
-                    </span>
-                  )}
                 </div>
               </div>
 
@@ -493,10 +633,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
                   onFocus={() => setShowSuggestions(true)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && inputValue.trim()) addFilter(inputValue);
-                    if (e.key === 'Backspace' && !inputValue && activeFilters.length > 0) {
-                      const last = activeFilters[activeFilters.length - 1];
-                      removeFilter(last.value, last.type);
-                    }
                   }}
                 />
               </div>
@@ -507,7 +643,6 @@ const TransactionList: React.FC<TransactionListProps> = ({
                     <div key={group.type}>
                       <div className="px-4 py-1.5 bg-gray-50/80 text-[9px] font-black text-gray-400 uppercase tracking-widest border-y border-gray-100/50 flex items-center justify-between">
                         <span>{getScopeLabel(group.type)}</span>
-                        <div className="w-8 h-[1px] bg-gray-200"></div>
                       </div>
                       {group.items.map((label, idx) => (
                         <button 
@@ -596,7 +731,19 @@ const TransactionList: React.FC<TransactionListProps> = ({
           <table className="w-full text-left border-collapse min-w-[900px]">
             <thead className="sticky top-0 z-20">
               <tr className="bg-gray-50 border-b border-gray-100 text-[9px] font-black text-gray-400 uppercase tracking-widest">
-                <th className="px-6 py-4 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => toggleSort('date')}>
+                <th className="px-6 py-4 w-12 text-center">
+                  <button 
+                    onClick={toggleSelectAll}
+                    className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                      selectedIds.size === filteredTransactions.length && filteredTransactions.length > 0
+                        ? 'bg-blue-600 border-blue-600 text-white' 
+                        : 'border-gray-200 bg-white hover:border-blue-400'
+                    }`}
+                  >
+                    {selectedIds.size === filteredTransactions.length && filteredTransactions.length > 0 && <Check size={12} />}
+                  </button>
+                </th>
+                <th className="px-4 py-4 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => toggleSort('date')}>
                   <div className="flex items-center">Date <SortIndicator columnKey="date" /></div>
                 </th>
                 <th className="px-6 py-4 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => toggleSort('category')}>
@@ -618,22 +765,23 @@ const TransactionList: React.FC<TransactionListProps> = ({
             </thead>
             <tbody className="divide-y divide-gray-50">
               {filteredTransactions.map(t => {
-                const isDuplicate = t.id && duplicateInfo.flaggedIds.has(t.id);
-                const isToBeDeleted = t.id && duplicateInfo.deleteList.includes(t.id);
+                const isSelected = t.id && selectedIds.has(t.id);
+                const isDrafted = t.id && draftTransactionsMap.has(t.id);
                 return (
                   <tr 
                     key={t.id} 
-                    className={`hover:bg-blue-50/20 group transition-colors cursor-pointer ${isDuplicate ? 'bg-amber-50/10' : ''}`}
+                    className={`hover:bg-blue-50/20 group transition-colors cursor-pointer ${isSelected ? 'bg-indigo-50/40' : ''}`}
                     onClick={() => setViewingTransaction(t)}
                   >
-                    <td 
-                      className={`px-6 py-3.5 font-bold text-[10px] uppercase tracking-tighter ${t.fromTemplate ? 'text-rose-600' : 'text-gray-400'}`}
-                      title={t.fromTemplate ? "Posted via Recurring Transactions" : undefined}
-                    >
-                      <div className="flex items-center gap-2">
-                        {isToBeDeleted && <div className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-sm" title="Marked as copy" />}
-                        {t.date}
+                    <td className="px-6 py-3.5" onClick={(e) => t.id && toggleSelect(t.id, e)}>
+                      <div className={`mx-auto w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                        isSelected ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-200 group-hover:border-blue-400'
+                      }`}>
+                        {isSelected && <Check size={12} />}
                       </div>
+                    </td>
+                    <td className={`px-4 py-3.5 font-bold text-[10px] uppercase tracking-tighter ${t.fromTemplate ? 'text-rose-600' : 'text-gray-400'}`}>
+                      {t.date}
                     </td>
                     <td className="px-6 py-3.5">
                       <div className="flex items-center gap-2">
@@ -650,23 +798,18 @@ const TransactionList: React.FC<TransactionListProps> = ({
                         <button onClick={(e) => { e.stopPropagation(); addFilter(t.merchant || 'Undefined', 'merchant'); }} className="font-black text-gray-700 uppercase tracking-tight text-xs hover:text-blue-600 truncate max-w-[150px]">
                           {t.merchant || 'Undefined'}
                         </button>
-                        {t.description && (
-                          <div className="relative group/note shrink-0">
-                            <FileText size={12} className="text-gray-300 group-hover/note:text-blue-500 transition-colors cursor-help" />
-                            <div className="absolute bottom-full left-0 mb-2 w-64 bg-white text-gray-700 p-3 rounded-xl text-[11px] font-semibold shadow-2xl border border-gray-100 opacity-0 invisible group-hover/note:opacity-100 group-hover/note:visible transition-all z-50 text-left whitespace-normal break-words">
-                              <div className="text-[9px] font-black uppercase text-blue-500 mb-1 border-b border-blue-50 pb-1">Notes</div>
-                              <div className="pt-1">{t.description}</div>
-                            </div>
-                          </div>
-                        )}
                       </div>
                     </td>
                     <td className="px-6 py-3.5">
-                      {t.paymentMethod ? (
-                        <button onClick={(e) => { e.stopPropagation(); addFilter(t.paymentMethod!, 'payment'); }} className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-blue-600">
-                          <CreditCard size={12} className="text-gray-300" /> {t.paymentMethod}
-                        </button>
-                      ) : <span className="text-gray-200">-</span>}
+                      <div className="flex items-center gap-2">
+                        {t.paymentMethod ? (
+                          <button onClick={(e) => { e.stopPropagation(); addFilter(t.paymentMethod!, 'payment'); }} className="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-blue-600">
+                            <CreditCard size={12} className="text-gray-300" /> {t.paymentMethod}
+                          </button>
+                        ) : <span className="text-gray-200">-</span>}
+                        {isDrafted && <Clock size={12} className="text-amber-500" title="In-progress reconciliation" />}
+                        {t.reconciled && <ShieldCheck size={12} className="text-emerald-500" title="Verified reconciliation" />}
+                      </div>
                     </td>
                     <td className={`px-6 py-3.5 text-right font-black text-sm ${t.type === TransactionType.INCOME ? 'text-emerald-500' : 'text-gray-900'}`}>
                       {t.type === TransactionType.INCOME ? '+' : '-'}${t.amount.toFixed(2)}
@@ -675,7 +818,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
                 );
               })}
               {filteredTransactions.length === 0 && (
-                <tr><td colSpan={6} className="px-6 py-16 text-center"><div className="flex flex-col items-center gap-2 opacity-20"><ListOrdered size={40} /><p className="text-xs font-black uppercase tracking-widest">No Records Found</p></div></td></tr>
+                <tr><td colSpan={7} className="px-6 py-16 text-center"><div className="flex flex-col items-center gap-2 opacity-20"><ListOrdered size={40} /><p className="text-xs font-black uppercase tracking-widest">No Records Found</p></div></td></tr>
               )}
             </tbody>
           </table>
@@ -693,7 +836,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
               This will safely remove all <span className="font-bold text-gray-900">{duplicateInfo.deleteList.length}</span> identical entries, keeping only the original record for each.
             </p>
             <div className="flex flex-col gap-3">
-              <button onClick={handleCleanDuplicates} className="w-full py-4 rounded-2xl bg-rose-600 text-white font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-100 hover:bg-rose-700 transition-all active:scale-95 flex items-center justify-center gap-2">
+              <button onClick={() => { if(onDeleteMultiple) onDeleteMultiple(duplicateInfo.deleteList); setIsCleaningDuplicates(false); }} className="w-full py-4 rounded-2xl bg-rose-600 text-white font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-100 hover:bg-rose-700 transition-all active:scale-95 flex items-center justify-center gap-2">
                 <CheckCircle size={14} /> Clear {duplicateInfo.deleteList.length} Duplicates
               </button>
               <button onClick={() => setIsCleaningDuplicates(false)} className="w-full py-4 rounded-2xl bg-gray-100 text-gray-500 font-black uppercase text-[10px] tracking-widest hover:bg-gray-200 transition-all">Cancel</button>

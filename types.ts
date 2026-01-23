@@ -25,6 +25,31 @@ export interface Transaction {
   description: string;
   type: TransactionType;
   fromTemplate?: boolean;
+  reconciled?: boolean;
+  clearedAt?: string;
+}
+
+export interface StatementRecord {
+  id?: number;
+  paymentMethod: string;
+  statementDate: string;
+  startingBalance: number;
+  endingBalance: number;
+  transactionIds: number[];
+  createdAt: string;
+  balanceMode?: 'asset' | 'liability';
+}
+
+export interface DraftStatement {
+  id?: number;
+  paymentMethod: string;
+  startDate: string;
+  endDate: string;
+  openingBalance: number;
+  targetBalance: number;
+  transactionIds: number[];
+  updatedAt: string;
+  balanceMode?: 'asset' | 'liability';
 }
 
 export interface RecurringTemplate {
@@ -66,6 +91,6 @@ export interface PaymentMethod {
   icon?: string;
 }
 
-export type View = 'dashboard' | 'list' | 'categories' | 'merchants' | 'payments' | 'backups' | 'templates';
+export type View = 'dashboard' | 'list' | 'categories' | 'merchants' | 'payments' | 'backups' | 'templates' | 'reconciliation';
 
 export const INITIAL_CATEGORIES: { name: string; type: TransactionType; subCategories?: string[] }[] = [];
