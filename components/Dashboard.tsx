@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Transaction, TransactionType, Category } from '../types';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, 
@@ -6,8 +6,9 @@ import {
 } from 'recharts';
 import { 
   Wallet, TrendingUp, TrendingDown, Table as TableIcon, 
-  Store, Layers, Calendar, RotateCcw, ChevronDown, BarChart3, Sigma, Calculator,
-  ArrowUpDown, MoveUp, MoveDown, History
+  Store, Layers, Calendar as CalendarIcon, RotateCcw, ChevronDown, BarChart3, Sigma, Calculator,
+  ArrowUpDown, MoveUp, MoveDown, History, ChevronRight, Hash, DollarSign, FileText, ListOrdered,
+  ChevronLeft, LayoutList, SortAsc, SortDesc
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -19,10 +20,22 @@ type DashboardTab = 'overview' | 'ledger' | 'comparison' | 'merchants' | 'catego
 
 const COLORS = ['#2563EB', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#6366F1', '#14B8A6', '#F97316'];
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const FULL_MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const getLocalDateString = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+const formatLongDate = (dateStr: string) => {
+  const date = new Date(dateStr.replace(/-/g, '/'));
+  return new Intl.DateTimeFormat('en-US', { 
+    weekday: 'long', 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  }).format(date);
 };
 
 const TrendTooltip = ({ active, payload, label }: any) => {
@@ -32,7 +45,7 @@ const TrendTooltip = ({ active, payload, label }: any) => {
     const growth = payload.find((p: any) => p.dataKey === 'cumulative')?.value || 0;
 
     return (
-      <div className="bg-white p-4 rounded-2xl shadow-2xl border border-gray-100 animate-in fade-in zoom-in-95 duration-200 min-w-[180px]">
+      <div className="bg-white p-4 rounded-2xl shadow-2xl border border-gray-100 animate-in fade-in zoom-in-95 duration-200 min-w-[180px] z-[100]">
         <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 border-b border-gray-50 pb-2">{label}</p>
         <div className="space-y-2">
           <div className="flex justify-between items-center gap-4">
@@ -56,6 +69,30 @@ const TrendTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
+const ExpensePieTooltip = ({ active, payload, total }: { active?: boolean, payload?: any[], total: number }) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    const percentage = total > 0 ? ((data.value / total) * 100).toFixed(1) : 0;
+
+    return (
+      <div className="bg-white p-4 rounded-2xl shadow-2xl border border-gray-100 animate-in fade-in zoom-in-95 duration-200 min-w-[160px] z-[200]">
+        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 border-b border-gray-50 pb-1.5">{data.name}</p>
+        <div className="space-y-1.5">
+          <div className="flex justify-between items-center gap-4">
+            <span className="text-[9px] font-black text-gray-500 uppercase tracking-tight">Amount</span>
+            <span className="text-xs font-black text-gray-900">${data.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          </div>
+          <div className="flex justify-between items-center gap-4">
+            <span className="text-[9px] font-black text-blue-600 uppercase tracking-tight">Percentage</span>
+            <span className="text-xs font-black text-blue-600">{percentage}%</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
+
 const CustomYoYTooltip = ({ active, payload, label, currentYear, prevYear }: any) => {
   if (active && payload && payload.length) {
     const focusData = payload.find((p: any) => p.dataKey === 'current');
@@ -63,7 +100,7 @@ const CustomYoYTooltip = ({ active, payload, label, currentYear, prevYear }: any
     const seasonalAvg = payload.find((p: any) => p.dataKey === 'seasonalAvg')?.value || 0;
 
     return (
-      <div className="bg-white p-5 rounded-2xl shadow-2xl border border-gray-100 animate-in fade-in zoom-in-95 duration-200 min-w-[240px]">
+      <div className="bg-white p-5 rounded-2xl shadow-2xl border border-gray-100 animate-in fade-in zoom-in-95 duration-200 min-w-[240px] z-[100]">
         <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 border-b border-gray-50 pb-2">{label} Analysis</p>
         
         <div className="space-y-4">
@@ -116,6 +153,16 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
   const [endDate, setEndDate] = useState('');
   const [comparisonYear, setComparisonYear] = useState<string>('');
   
+  // Drill-down State
+  const [drillDownCategory, setDrillDownCategory] = useState<string | null>(null);
+  const [drillDownSubCategory, setDrillDownSubCategory] = useState<string | null>(null);
+  const [drillDownMerchant, setDrillDownMerchant] = useState<string | null>(null);
+
+  // Merchant View State
+  const [merchantViewMode, setMerchantViewMode] = useState<'list' | 'calendar'>('list');
+  const [calendarDate, setCalendarDate] = useState(new Date());
+  const [merchantSort, setMerchantSort] = useState<{ key: 'date' | 'amount', dir: 'asc' | 'desc' }>({ key: 'date', dir: 'desc' });
+
   const datePresets = useMemo(() => {
     const todayStr = getLocalDateString();
     const now = new Date();
@@ -225,13 +272,17 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
     });
   }, [filteredTransactions]);
 
-  const categoryPieData = useMemo(() => {
-    const totals: Record<string, number> = {};
-    filteredTransactions.filter(t => t.type === TransactionType.EXPENSE).forEach(t => {
-      totals[t.category] = (totals[t.category] || 0) + t.amount;
+  const annualTrendData = useMemo(() => {
+    const years: Record<string, { income: number, expenses: number }> = {};
+    transactions.forEach(t => {
+      const y = t.date.split('-')[0];
+      if (!y) return;
+      if (!years[y]) years[y] = { income: 0, expenses: 0 };
+      if (t.type === TransactionType.INCOME) years[y].income += t.amount;
+      else if (t.type === TransactionType.EXPENSE) years[y].expenses += t.amount;
     });
-    return Object.entries(totals).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  }, [filteredTransactions]);
+    return Object.entries(years).map(([name, data]) => ({ name, ...data })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [transactions]);
 
   const merchantStats = useMemo(() => {
     const data: Record<string, { total: number; count: number; category: string }> = {};
@@ -308,26 +359,138 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
     return tree;
   }, [filteredTransactions]);
 
-  // Derived data for a cleaner Category Distribution
-  const processedCategoryData = useMemo(() => {
-    const totalSpend = categoryPieData.reduce((sum, item) => sum + item.value, 0);
-    if (totalSpend === 0) return [];
+  // Enhanced Explorer Data Logic
+  const explorerData = useMemo(() => {
+    const totals: Record<string, number> = {};
+    
+    // Filter transactions based on current drill-down level
+    const baseSet = filteredTransactions.filter(t => t.type === TransactionType.EXPENSE);
+    let targetSet = baseSet;
+    let groupKey: 'category' | 'subCategory' | 'merchant' = 'category';
 
-    const threshold = 0.02; // Group items < 2% into 'Other'
-    let otherSum = 0;
-    const items = categoryPieData.filter(item => {
-      if (item.value / totalSpend < threshold) {
-        otherSum += item.value;
-        return false;
-      }
-      return true;
+    if (drillDownCategory) {
+      targetSet = baseSet.filter(t => t.category === drillDownCategory);
+      groupKey = 'subCategory';
+    }
+    
+    if (drillDownSubCategory) {
+      targetSet = targetSet.filter(t => (t.subCategory || 'Unspecified') === drillDownSubCategory);
+      groupKey = 'merchant';
+    }
+
+    targetSet.forEach(t => {
+      const key = (groupKey === 'merchant' ? t.merchant : groupKey === 'subCategory' ? t.subCategory : t.category) || 'Unspecified';
+      totals[key] = (totals[key] || 0) + t.amount;
     });
 
-    if (otherSum > 0) {
-      items.push({ name: 'Other (Minor)', value: otherSum });
+    const items = Object.entries(totals).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+    
+    const topN = 10;
+    if (items.length <= topN) return items;
+
+    const topItems = items.slice(0, topN);
+    const remainder = items.slice(topN);
+    const otherSum = remainder.reduce((sum, item) => sum + item.value, 0);
+
+    return [
+      ...topItems,
+      { name: `Other ${groupKey === 'category' ? 'Categories' : groupKey === 'subCategory' ? 'Subs' : 'Merchants'}`, value: otherSum }
+    ];
+  }, [filteredTransactions, drillDownCategory, drillDownSubCategory]);
+
+  const merchantDetailTransactions = useMemo(() => {
+    if (!drillDownMerchant) return [];
+    return filteredTransactions
+      .filter(t => t.merchant === drillDownMerchant && t.type === TransactionType.EXPENSE)
+      .sort((a, b) => {
+        if (merchantSort.key === 'amount') {
+          return merchantSort.dir === 'asc' ? a.amount - b.amount : b.amount - a.amount;
+        }
+        return merchantSort.dir === 'asc' ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date);
+      });
+  }, [filteredTransactions, drillDownMerchant, merchantSort]);
+
+  // Set default calendar month to the first available transaction's month in the filtered set
+  useEffect(() => {
+    if (drillDownMerchant && merchantDetailTransactions.length > 0) {
+      const earliest = [...merchantDetailTransactions].sort((a, b) => a.date.localeCompare(b.date))[0];
+      if (earliest) {
+        setCalendarDate(new Date(earliest.date.replace(/-/g, '/')));
+      }
     }
-    return items.sort((a, b) => b.value - a.value);
-  }, [categoryPieData]);
+  }, [drillDownMerchant, merchantDetailTransactions]);
+
+  // Calendar Logic for Merchant Detail
+  const calendarData = useMemo(() => {
+    const year = calendarDate.getFullYear();
+    const month = calendarDate.getMonth();
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    
+    const days = [];
+    // Padding for start of month
+    for (let i = 0; i < firstDay; i++) {
+      days.push({ day: null, date: null, txs: [] });
+    }
+    // Days of the month
+    for (let i = 1; i <= daysInMonth; i++) {
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+      const dayTxs = merchantDetailTransactions.filter(t => t.date === dateStr);
+      days.push({ day: i, date: dateStr, txs: dayTxs });
+    }
+    
+    // Crucial: Fixed grid to always show 6 rows (42 cells) to handle any month span
+    while (days.length < 42) {
+      days.push({ day: null, date: null, txs: [] });
+    }
+
+    return days;
+  }, [calendarDate, merchantDetailTransactions]);
+
+  const merchantInsightStats = useMemo(() => {
+    if (merchantDetailTransactions.length === 0) return { count: 0, avg: 0, total: 0 };
+    const total = merchantDetailTransactions.reduce((s, t) => s + t.amount, 0);
+    return {
+      count: merchantDetailTransactions.length,
+      total,
+      avg: total / merchantDetailTransactions.length
+    };
+  }, [merchantDetailTransactions]);
+
+  const explorerTotalValue = useMemo(() => explorerData.reduce((s, i) => s + i.value, 0), [explorerData]);
+
+  const handleSliceClick = (data: any) => {
+    if (!drillDownCategory) {
+      if (!data.name.includes('Other')) setDrillDownCategory(data.name);
+    } else if (!drillDownSubCategory) {
+      if (!data.name.includes('Other')) setDrillDownSubCategory(data.name);
+    } else if (!drillDownMerchant) {
+      if (!data.name.includes('Other')) {
+        setDrillDownMerchant(data.name);
+      }
+    }
+  };
+
+  const resetDrilldown = () => {
+    setDrillDownCategory(null);
+    setDrillDownSubCategory(null);
+    setDrillDownMerchant(null);
+    setMerchantViewMode('list');
+    setMerchantSort({ key: 'date', dir: 'desc' });
+  };
+
+  const changeMonth = (offset: number) => {
+    const next = new Date(calendarDate);
+    next.setMonth(next.getMonth() + offset);
+    setCalendarDate(next);
+  };
+
+  const toggleMerchantSort = (key: 'date' | 'amount') => {
+    setMerchantSort(prev => ({
+      key,
+      dir: prev.key === key && prev.dir === 'desc' ? 'asc' : 'desc'
+    }));
+  };
 
   return (
     <div className="space-y-8 pb-10">
@@ -368,7 +531,7 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
           </div>
 
           <div className="flex items-center gap-2 bg-gray-50 p-2 rounded-xl border border-gray-100 w-full md:w-auto shadow-inner">
-            <Calendar size={14} className="text-gray-400 ml-1" />
+            <CalendarIcon size={14} className="text-gray-400 ml-1" />
             <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="bg-transparent text-[10px] font-black outline-none w-full md:w-28 uppercase" />
             <span className="text-[10px] font-black text-gray-300">TO</span>
             <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="bg-transparent text-[10px] font-black outline-none w-full md:w-28 uppercase" />
@@ -381,6 +544,28 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
         {activeTab === 'overview' && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <ChartBox title="Annual Trend Analysis">
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={annualTrendData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 700}} />
+                    <YAxis 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{fontSize: 10, fontWeight: 700}}
+                      tickFormatter={(v) => `$${v.toLocaleString()}`}
+                    />
+                    <Tooltip 
+                      cursor={{fill: '#f8fafc'}} 
+                      formatter={(v: number) => [`$${v.toLocaleString()}`, '']}
+                    />
+                    <Legend verticalAlign="top" height={36} />
+                    <Bar dataKey="income" fill="#10B981" radius={[4, 4, 0, 0]} name="Income" />
+                    <Bar dataKey="expenses" fill="#EF4444" radius={[4, 4, 0, 0]} name="Expenses" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartBox>
+
               <ChartBox title="Monthly Trend Analysis">
                 <ResponsiveContainer width="100%" height={300}>
                   <ComposedChart data={trendData}>
@@ -390,7 +575,12 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                     <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 700}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 700}} />
+                    <YAxis 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{fontSize: 10, fontWeight: 700}}
+                      tickFormatter={(v) => `$${v.toLocaleString()}`}
+                    />
                     <Tooltip content={<TrendTooltip />} cursor={{fill: '#f8fafc'}} />
                     <Legend verticalAlign="top" height={36} />
                     <Area type="monotone" dataKey="income" stroke="#10B981" fill="url(#colorInc)" strokeWidth={2} name="Income" />
@@ -398,45 +588,6 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
                     <Line type="monotone" dataKey="cumulative" stroke="#2563EB" strokeWidth={3} dot={false} name="Cumulative Growth" />
                   </ComposedChart>
                 </ResponsiveContainer>
-              </ChartBox>
-              
-              <ChartBox title="Category Distribution">
-                <div className="flex flex-col md:flex-row items-center gap-6 h-[300px]">
-                  <div className="w-full md:w-1/2 h-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie 
-                          data={processedCategoryData} 
-                          dataKey="value" 
-                          nameKey="name" 
-                          cx="50%" cy="50%" 
-                          innerRadius={60} 
-                          outerRadius={90} 
-                          paddingAngle={2}
-                          stroke="none"
-                        >
-                          {processedCategoryData.map((_, i) => <Cell key={`cell-${i}`} fill={COLORS[i % COLORS.length]} />)}
-                        </Pie>
-                        <Tooltip formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Total Spent']} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="w-full md:w-1/2 h-full overflow-y-auto pr-4 scrollbar-hide">
-                    <div className="space-y-2">
-                      {categoryPieData.map((item, i) => (
-                        <div key={item.name} className="flex items-center justify-between group">
-                          <div className="flex items-center gap-2 overflow-hidden">
-                            <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }}></div>
-                            <span className="text-[10px] font-black uppercase text-gray-500 truncate group-hover:text-gray-900 transition-colors">{item.name}</span>
-                          </div>
-                          <span className="text-[11px] font-black text-gray-900 ml-2 whitespace-nowrap">
-                            ${item.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
               </ChartBox>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -503,7 +654,12 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
                   <ComposedChart data={comparisonData.data}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                     <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 700}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 700}} />
+                    <YAxis 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{fontSize: 10, fontWeight: 700}}
+                      tickFormatter={(v) => `$${v.toLocaleString()}`}
+                    />
                     <Tooltip 
                         content={<CustomYoYTooltip currentYear={comparisonData.currentYear} prevYear={comparisonData.prevYear} />} 
                         cursor={{fill: '#f8fafc'}} 
@@ -575,27 +731,287 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
         )}
 
         {activeTab === 'categories' && (
-          <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm">
-            <h3 className="text-lg font-black text-gray-800 uppercase mb-8">Expense Rankings</h3>
-            <ResponsiveContainer width="100%" height={400}>
-              <BarChart data={categoryPieData} layout="vertical" margin={{ left: 100, right: 60 }}>
-                <XAxis type="number" hide />
-                <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 700}} />
-                <Tooltip 
-                  cursor={{fill: '#f8fafc'}} 
-                  formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Total Spent']}
-                />
-                <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
-                  <LabelList 
-                    dataKey="value" 
-                    position="right" 
-                    formatter={(v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
-                    style={{ fontSize: '10px', fontWeight: 'bold', fill: '#64748b' }} 
-                  />
-                  {categoryPieData.map((_, i) => <Cell key={`cell-${i}`} fill={COLORS[i % COLORS.length]} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+          <div className="space-y-6">
+            <ChartBox title="Expense Distribution Explorer">
+              {/* Breadcrumbs */}
+              <div className="mb-6 flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                <button 
+                  onClick={resetDrilldown}
+                  className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors whitespace-nowrap ${!drillDownCategory ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}
+                >
+                  All Categories
+                </button>
+                {drillDownCategory && (
+                  <>
+                    <ChevronRight size={14} className="text-gray-300 shrink-0" />
+                    <button 
+                      onClick={() => { setDrillDownSubCategory(null); setDrillDownMerchant(null); }}
+                      className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors whitespace-nowrap ${drillDownCategory && !drillDownSubCategory ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}
+                    >
+                      {drillDownCategory}
+                    </button>
+                  </>
+                )}
+                {drillDownSubCategory && (
+                  <>
+                    <ChevronRight size={14} className="text-gray-300 shrink-0" />
+                    <button 
+                      onClick={() => setDrillDownMerchant(null)}
+                      className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors whitespace-nowrap ${drillDownSubCategory && !drillDownMerchant ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}
+                    >
+                      {drillDownSubCategory}
+                    </button>
+                  </>
+                )}
+                {drillDownMerchant && (
+                  <>
+                    <ChevronRight size={14} className="text-gray-300 shrink-0" />
+                    <button 
+                      className="px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest bg-blue-600 text-white whitespace-nowrap"
+                    >
+                      {drillDownMerchant}
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div className="flex flex-col md:flex-row items-center gap-10 h-[420px] relative">
+                {drillDownMerchant ? (
+                  /* Detail View: Merchant Insight Cards */
+                  <div className="w-full flex flex-col md:flex-row gap-8 items-center h-full animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    <div className="w-full md:w-1/2 h-full flex flex-col justify-center space-y-4">
+                      <div className="p-6 bg-blue-50 rounded-[32px] border border-blue-100 shadow-sm text-center">
+                        <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center text-white mx-auto mb-4 shadow-lg shadow-blue-100">
+                          <Store size={24} />
+                        </div>
+                        <h4 className="text-sm font-black text-blue-900 uppercase tracking-[0.2em] mb-1">{drillDownMerchant}</h4>
+                        <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Aggregate Data</p>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-white p-6 rounded-[28px] border border-gray-100 shadow-sm flex flex-col items-center">
+                          <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl mb-3"><Hash size={16} /></div>
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Frequency</p>
+                          <p className="text-xl font-black text-gray-900">{merchantInsightStats.count} <span className="text-[10px] text-gray-300">times</span></p>
+                        </div>
+                        <div className="bg-white p-6 rounded-[28px] border border-gray-100 shadow-sm flex flex-col items-center">
+                          <div className="p-2 bg-blue-50 text-blue-600 rounded-xl mb-3"><Calculator size={16} /></div>
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Avg Ticket</p>
+                          <p className="text-xl font-black text-gray-900">${merchantInsightStats.avg.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                        </div>
+                      </div>
+                      
+                      <div className="bg-gray-900 p-6 rounded-[28px] text-center shadow-xl">
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Entity Total Spend</p>
+                        <p className="text-3xl font-black text-white">${merchantInsightStats.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                      </div>
+                    </div>
+                    
+                    {/* Detailed Ledger / Calendar for Merchant */}
+                    <div className="w-full md:w-1/2 h-full bg-gray-50/50 rounded-[32px] border border-gray-100 flex flex-col relative overflow-hidden">
+                       <div className="p-4 border-b border-gray-100 flex items-center justify-between shrink-0 bg-white z-20">
+                         <div className="flex items-center gap-2">
+                           <ListOrdered size={14} className="text-gray-400" />
+                           <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Transactions</span>
+                         </div>
+                         <div className="flex bg-gray-200 p-1 rounded-xl">
+                           <button 
+                             onClick={() => setMerchantViewMode('list')}
+                             className={`p-1.5 rounded-lg transition-all ${merchantViewMode === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                           >
+                             <LayoutList size={14} />
+                           </button>
+                           <button 
+                             onClick={() => setMerchantViewMode('calendar')}
+                             className={`p-1.5 rounded-lg transition-all ${merchantViewMode === 'calendar' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                           >
+                             <CalendarIcon size={14} />
+                           </button>
+                         </div>
+                       </div>
+                       
+                       <div className={`flex-1 relative ${merchantViewMode === 'calendar' ? 'overflow-visible' : 'overflow-y-auto custom-scrollbar'}`}>
+                         {merchantViewMode === 'list' ? (
+                           /* List View with Sorting */
+                           <div className="p-2 flex flex-col h-full">
+                             <div className="flex items-center justify-end gap-3 px-2 mb-2 pb-2 border-b border-gray-100">
+                               <button 
+                                 onClick={() => toggleMerchantSort('date')}
+                                 className={`flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg transition-all ${merchantSort.key === 'date' ? 'bg-blue-50 text-blue-600' : 'text-gray-400 hover:bg-gray-50'}`}
+                               >
+                                 Date {merchantSort.key === 'date' && (merchantSort.dir === 'asc' ? <SortAsc size={10}/> : <SortDesc size={10}/>)}
+                               </button>
+                               <button 
+                                 onClick={() => toggleMerchantSort('amount')}
+                                 className={`flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg transition-all ${merchantSort.key === 'amount' ? 'bg-blue-50 text-blue-600' : 'text-gray-400 hover:bg-gray-50'}`}
+                               >
+                                 Amount {merchantSort.key === 'amount' && (merchantSort.dir === 'asc' ? <SortAsc size={10}/> : <SortDesc size={10}/>)}
+                               </button>
+                             </div>
+                             <div className="space-y-1.5 overflow-y-auto custom-scrollbar pr-1">
+                               {merchantDetailTransactions.map((t, i) => (
+                                 <div key={i} className="bg-white p-3.5 rounded-2xl flex items-center justify-between border border-transparent shadow-sm hover:border-blue-100 hover:shadow-md transition-all group">
+                                   <div className="flex items-center gap-4">
+                                     <div className="p-2.5 bg-gray-50 rounded-xl text-gray-400 group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors shadow-inner">
+                                       <CalendarIcon size={14} />
+                                     </div>
+                                     <div className="space-y-0.5">
+                                       <p className="text-[11px] font-black text-gray-900 leading-none">
+                                         {formatLongDate(t.date)}
+                                       </p>
+                                       <p className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter truncate max-w-[160px]">
+                                         {t.description || "--"}
+                                       </p>
+                                     </div>
+                                   </div>
+                                   <span className="text-[13px] font-black text-rose-600 tabular-nums">
+                                     -${t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                   </span>
+                                 </div>
+                               ))}
+                             </div>
+                           </div>
+                         ) : (
+                           /* Calendar View - Fixed row count and placement with Light Tooltip */
+                           <div className="h-full flex flex-col p-3 animate-in zoom-in-95 duration-200 bg-white overflow-visible">
+                             <div className="flex items-center justify-between mb-2 px-1">
+                               <button onClick={() => changeMonth(-1)} className="p-1 text-gray-400 hover:text-blue-600 transition-colors"><ChevronLeft size={16}/></button>
+                               <h5 className="text-[10px] font-black uppercase text-gray-900 tracking-widest">
+                                 {FULL_MONTH_NAMES[calendarDate.getMonth()]} {calendarDate.getFullYear()}
+                               </h5>
+                               <button onClick={() => changeMonth(1)} className="p-1 text-gray-400 hover:text-blue-600 transition-colors"><ChevronRight size={16}/></button>
+                             </div>
+                             
+                             <div className="grid grid-cols-7 gap-1 flex-1 overflow-visible">
+                               {DAYS_SHORT.map(d => (
+                                 <div key={d} className="text-center text-[8px] font-black text-gray-300 uppercase py-1">{d}</div>
+                               ))}
+                               {calendarData.map((d, i) => {
+                                 // Tooltip logical placement
+                                 const colIndex = i % 7;
+                                 const isBottomRows = i >= 21;
+                                 
+                                 let tooltipXClass = "left-1/2 -translate-x-1/2";
+                                 let arrowXClass = "left-1/2 -translate-x-1/2";
+                                 
+                                 if (colIndex <= 1) {
+                                   tooltipXClass = "left-0 translate-x-0";
+                                   arrowXClass = "left-4";
+                                 } else if (colIndex >= 5) {
+                                   tooltipXClass = "right-0 translate-x-0 left-auto";
+                                   arrowXClass = "right-4 left-auto";
+                                 }
+
+                                 return (
+                                   <div key={i} className="relative group h-9 md:h-11">
+                                     {d.day ? (
+                                       <>
+                                         <div className={`w-full h-full rounded-lg border flex items-center justify-center text-[10px] font-black transition-all ${
+                                            d.txs.length > 0 
+                                              ? 'bg-blue-50 text-blue-700 border-blue-100 shadow-sm' 
+                                              : 'bg-white text-gray-300 border-gray-50'
+                                          }`}>
+                                           {d.day}
+                                         </div>
+                                         {/* Smarter Light Tooltip positioning */}
+                                         {d.txs.length > 0 && (
+                                           <div className={`absolute ${isBottomRows ? 'bottom-full mb-3' : 'top-full mt-3'} ${tooltipXClass} z-[300] w-60 bg-white p-4 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.15)] opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 translate-y-1 group-hover:translate-y-0 border border-blue-50`}>
+                                              <p className="text-[9px] font-black uppercase tracking-[0.1em] text-blue-600 mb-3 border-b border-gray-50 pb-2">{formatLongDate(d.date!)}</p>
+                                              <div className="space-y-4 max-h-[160px] overflow-y-auto scrollbar-hide">
+                                                {d.txs.map((tx, idx) => (
+                                                  <div key={idx} className="flex flex-col gap-1.5 border-b border-gray-50 last:border-0 pb-1.5 last:pb-0">
+                                                    <div className="flex justify-between items-center">
+                                                      <span className="text-xs font-black text-gray-900">${tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                                    </div>
+                                                    {tx.description && (
+                                                      <p className="text-[10px] font-medium text-gray-500 leading-snug">
+                                                        {tx.description}
+                                                      </p>
+                                                    )}
+                                                  </div>
+                                                ))}
+                                              </div>
+                                              <div className={`absolute ${isBottomRows ? 'top-full border-t-white' : 'bottom-full border-b-white'} ${arrowXClass} w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent ${isBottomRows ? 'border-t-[6px]' : 'border-b-[6px]'}`}></div>
+                                           </div>
+                                         )}
+                                       </>
+                                     ) : (
+                                        <div className="w-full h-full"></div>
+                                     )}
+                                   </div>
+                                 );
+                               })}
+                             </div>
+                           </div>
+                         )}
+                       </div>
+                    </div>
+                  </div>
+                ) : (
+                  /* Standard Chart View */
+                  <>
+                    <div className="w-full md:w-1/2 h-full relative flex items-center justify-center">
+                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none z-0">
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Total Spent</p>
+                        <p className="text-2xl font-black text-gray-900 mt-0.5">
+                          ${explorerTotalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        </p>
+                      </div>
+                      
+                      <div className="relative z-10 w-full h-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie 
+                              data={explorerData} 
+                              dataKey="value" 
+                              nameKey="name" 
+                              cx="50%" cy="50%" 
+                              innerRadius={90} 
+                              outerRadius={130} 
+                              paddingAngle={3}
+                              stroke="none"
+                              onClick={handleSliceClick}
+                              className="cursor-pointer outline-none"
+                              animationBegin={0}
+                              animationDuration={600}
+                            >
+                              {explorerData.map((_, i) => <Cell key={`cell-${i}`} fill={COLORS[i % COLORS.length]} />)}
+                            </Pie>
+                            <Tooltip content={<ExpensePieTooltip total={explorerTotalValue} />} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                    
+                    <div className="w-full md:w-1/2 h-full flex flex-col justify-center overflow-y-auto pr-6 space-y-0.5 custom-scrollbar">
+                      {explorerData.map((item, i) => {
+                        const percentage = explorerTotalValue > 0 ? ((item.value / explorerTotalValue) * 100).toFixed(1) : 0;
+                        return (
+                          <button 
+                            key={item.name} 
+                            onClick={() => handleSliceClick(item)}
+                            className="w-full flex items-center justify-between py-0.5 px-3 rounded-xl hover:bg-gray-50 transition-all group border border-transparent hover:border-gray-100"
+                          >
+                            <div className="flex items-center gap-2 overflow-hidden flex-1">
+                              <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }}></div>
+                              <span className="text-[11px] font-black uppercase text-gray-500 truncate group-hover:text-gray-900">{item.name}</span>
+                            </div>
+                            <div className="flex items-center gap-4 shrink-0 ml-4">
+                              <span className="text-[11px] font-black text-gray-900">
+                                ${item.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                              <span className="w-10 text-right text-[10px] font-bold text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-md">
+                                {percentage}%
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            </ChartBox>
           </div>
         )}
       </div>
