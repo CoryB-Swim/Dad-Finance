@@ -1,13 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { Transaction, TransactionType, Category } from '../types';
 import { 
-  PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, 
-  AreaChart, Area, CartesianGrid, ReferenceLine, ComposedChart, Line
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip, 
+  ComposedChart, Line, Area, CartesianGrid, XAxis, YAxis, Legend, BarChart, Bar, LabelList
 } from 'recharts';
 import { 
-  Wallet, TrendingUp, TrendingDown, LayoutDashboard, Table as TableIcon, 
-  Store, Layers, Calendar, RotateCcw, ChevronRight, ChevronDown, BarChart3, Sigma, Calculator,
-  ArrowUpDown, SortAsc, SortDesc, Zap, MoveUp, MoveDown, History
+  Wallet, TrendingUp, TrendingDown, Table as TableIcon, 
+  Store, Layers, Calendar, RotateCcw, ChevronDown, BarChart3, Sigma, Calculator,
+  ArrowUpDown, MoveUp, MoveDown, History
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -58,7 +58,6 @@ const TrendTooltip = ({ active, payload, label }: any) => {
 
 const CustomYoYTooltip = ({ active, payload, label, currentYear, prevYear }: any) => {
   if (active && payload && payload.length) {
-    // payload[0] = focus year, payload[1] = compare year, payload[2] = seasonal avg
     const focusData = payload.find((p: any) => p.dataKey === 'current');
     const compareData = payload.find((p: any) => p.dataKey === 'previous');
     const seasonalAvg = payload.find((p: any) => p.dataKey === 'seasonalAvg')?.value || 0;
@@ -68,7 +67,6 @@ const CustomYoYTooltip = ({ active, payload, label, currentYear, prevYear }: any
         <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 border-b border-gray-50 pb-2">{label} Analysis</p>
         
         <div className="space-y-4">
-          {/* Historical Baseline Section */}
           <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100">
             <div className="flex justify-between items-center mb-1">
               <span className="text-[8px] font-black text-gray-400 uppercase tracking-tighter">Historical {label} Avg</span>
@@ -76,7 +74,6 @@ const CustomYoYTooltip = ({ active, payload, label, currentYear, prevYear }: any
             </div>
           </div>
 
-          {/* Focus Year Comparison */}
           {focusData && (
             <div className="space-y-1">
               <div className="flex items-center justify-between">
@@ -92,12 +89,11 @@ const CustomYoYTooltip = ({ active, payload, label, currentYear, prevYear }: any
             </div>
           )}
 
-          {/* Comparison Year Comparison */}
           {compareData && (
             <div className="space-y-1 pt-2 border-t border-gray-50">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-black uppercase tracking-tight text-blue-300">{prevYear} Actual</span>
-                <span className="text-xs font-black text-gray-400">${compareData.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                <span className="text-xs font-black text-gray-900">${compareData.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
               </div>
               <div className="flex items-center justify-between text-[8px] font-black uppercase">
                 <span className="text-gray-300">Vs Seasonal Avg</span>
@@ -120,7 +116,6 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
   const [endDate, setEndDate] = useState('');
   const [comparisonYear, setComparisonYear] = useState<string>('');
   
-  // Advanced Date Filter Logic
   const datePresets = useMemo(() => {
     const todayStr = getLocalDateString();
     const now = new Date();
@@ -180,7 +175,6 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
     }).sort((a, b) => a.date.localeCompare(b.date));
   }, [transactions, startDate, endDate]);
 
-  // Seasonal Monthly Averages: The historical "cadence" of the year
   const seasonalMonthlyAverages = useMemo(() => {
     const monthSums = Array(12).fill(0);
     const monthCounts = Array(12).fill(0);
@@ -202,7 +196,6 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
     return monthSums.map((sum, i) => monthCounts[i] > 0 ? sum / monthCounts[i] : 0);
   }, [transactions]);
 
-  // Data Processors
   const stats = useMemo(() => {
     const income = filteredTransactions.filter(t => t.type === TransactionType.INCOME).reduce((s, t) => s + t.amount, 0);
     const expenses = filteredTransactions.filter(t => t.type === TransactionType.EXPENSE).reduce((s, t) => s + t.amount, 0);
@@ -315,29 +308,46 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
     return tree;
   }, [filteredTransactions]);
 
+  // Derived data for a cleaner Category Distribution
+  const processedCategoryData = useMemo(() => {
+    const totalSpend = categoryPieData.reduce((sum, item) => sum + item.value, 0);
+    if (totalSpend === 0) return [];
+
+    const threshold = 0.02; // Group items < 2% into 'Other'
+    let otherSum = 0;
+    const items = categoryPieData.filter(item => {
+      if (item.value / totalSpend < threshold) {
+        otherSum += item.value;
+        return false;
+      }
+      return true;
+    });
+
+    if (otherSum > 0) {
+      items.push({ name: 'Other (Minor)', value: otherSum });
+    }
+    return items.sort((a, b) => b.value - a.value);
+  }, [categoryPieData]);
+
   return (
     <div className="space-y-8 pb-10">
-      {/* Primary Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <StatCard title="Net Balance" amount={stats.balance} icon={Wallet} color="bg-blue-600" />
         <StatCard title="Total Income" amount={stats.income} icon={TrendingUp} color="bg-emerald-600" />
         <StatCard title="Total Expenses" amount={stats.expenses} icon={TrendingDown} color="bg-rose-600" />
       </div>
 
-      {/* Navigation & Controls */}
       <div className="space-y-4">
-        {/* Row 1: Tab Selection */}
         <div className="bg-white p-2 rounded-3xl shadow-sm border border-gray-100">
           <div className="flex bg-gray-100 p-1.5 rounded-2xl w-full overflow-x-auto">
             <TabBtn id="overview" icon={BarChart3} label="Overview" active={activeTab === 'overview'} onClick={setActiveTab} className="flex-1" />
             <TabBtn id="ledger" icon={TableIcon} label="Ledger" active={activeTab === 'ledger'} onClick={setActiveTab} className="flex-1" />
             <TabBtn id="comparison" icon={ArrowUpDown} label="YoY Compare" active={activeTab === 'comparison'} onClick={setActiveTab} className="flex-1" />
-            <TabBtn id="merchants" icon={Store} label="Payees" active={activeTab === 'merchants'} onClick={setActiveTab} className="flex-1" />
+            <TabBtn id="merchants" icon={Store} label="Entities" active={activeTab === 'merchants'} onClick={setActiveTab} className="flex-1" />
             <TabBtn id="categories" icon={Layers} label="Insights" active={activeTab === 'categories'} onClick={setActiveTab} className="flex-1" />
           </div>
         </div>
 
-        {/* Row 2: Date Filters */}
         <div className="flex flex-col md:flex-row items-center justify-between gap-6 bg-white p-4 rounded-3xl shadow-sm border border-gray-100">
           <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
             <PresetBtn label="Today" active={startDate === datePresets.today.start} onClick={() => toggleDateRange('today')} />
@@ -367,7 +377,6 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
         </div>
       </div>
 
-      {/* Tab Content */}
       <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
         {activeTab === 'overview' && (
           <div className="space-y-6">
@@ -386,20 +395,48 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
                     <Legend verticalAlign="top" height={36} />
                     <Area type="monotone" dataKey="income" stroke="#10B981" fill="url(#colorInc)" strokeWidth={2} name="Income" />
                     <Area type="monotone" dataKey="expenses" stroke="#EF4444" fill="url(#colorExp)" strokeWidth={2} name="Expenses" />
-                    <Line type="monotone" dataKey="cumulative" stroke="#2563EB" strokeWidth={3} dot={false} name="Cumulative Growth" strokeShadow="0 2px 4px rgba(37,99,235,0.2)" />
+                    <Line type="monotone" dataKey="cumulative" stroke="#2563EB" strokeWidth={3} dot={false} name="Cumulative Growth" />
                   </ComposedChart>
                 </ResponsiveContainer>
               </ChartBox>
+              
               <ChartBox title="Category Distribution">
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie data={categoryPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5}>
-                      {categoryPieData.map((_, i) => <Cell key={`cell-${i}`} fill={COLORS[i % COLORS.length]} />)}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
+                <div className="flex flex-col md:flex-row items-center gap-6 h-[300px]">
+                  <div className="w-full md:w-1/2 h-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie 
+                          data={processedCategoryData} 
+                          dataKey="value" 
+                          nameKey="name" 
+                          cx="50%" cy="50%" 
+                          innerRadius={60} 
+                          outerRadius={90} 
+                          paddingAngle={2}
+                          stroke="none"
+                        >
+                          {processedCategoryData.map((_, i) => <Cell key={`cell-${i}`} fill={COLORS[i % COLORS.length]} />)}
+                        </Pie>
+                        <Tooltip formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Total Spent']} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="w-full md:w-1/2 h-full overflow-y-auto pr-4 scrollbar-hide">
+                    <div className="space-y-2">
+                      {categoryPieData.map((item, i) => (
+                        <div key={item.name} className="flex items-center justify-between group">
+                          <div className="flex items-center gap-2 overflow-hidden">
+                            <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }}></div>
+                            <span className="text-[10px] font-black uppercase text-gray-500 truncate group-hover:text-gray-900 transition-colors">{item.name}</span>
+                          </div>
+                          <span className="text-[11px] font-black text-gray-900 ml-2 whitespace-nowrap">
+                            ${item.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </ChartBox>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -521,7 +558,7 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
           <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
             <table className="w-full text-left">
               <thead className="bg-gray-50 text-[10px] font-black uppercase text-gray-400 border-b">
-                <tr><th className="px-8 py-4">Payee</th><th className="px-8 py-4">Category</th><th className="px-8 py-4 text-center">Visits</th><th className="px-8 py-4 text-right">Volume</th></tr>
+                <tr><th className="px-8 py-4">Entity</th><th className="px-8 py-4">Category</th><th className="px-8 py-4 text-center">Visits</th><th className="px-8 py-4 text-right">Volume</th></tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {merchantStats.map(m => (
@@ -541,11 +578,20 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
           <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm">
             <h3 className="text-lg font-black text-gray-800 uppercase mb-8">Expense Rankings</h3>
             <ResponsiveContainer width="100%" height={400}>
-              <BarChart data={categoryPieData} layout="vertical" margin={{ left: 100 }}>
+              <BarChart data={categoryPieData} layout="vertical" margin={{ left: 100, right: 60 }}>
                 <XAxis type="number" hide />
                 <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 700}} />
-                <Tooltip cursor={{fill: '#f8fafc'}} />
+                <Tooltip 
+                  cursor={{fill: '#f8fafc'}} 
+                  formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Total Spent']}
+                />
                 <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
+                  <LabelList 
+                    dataKey="value" 
+                    position="right" 
+                    formatter={(v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
+                    style={{ fontSize: '10px', fontWeight: 'bold', fill: '#64748b' }} 
+                  />
                   {categoryPieData.map((_, i) => <Cell key={`cell-${i}`} fill={COLORS[i % COLORS.length]} />)}
                 </Bar>
               </BarChart>
@@ -580,7 +626,7 @@ const StatCard = ({ title, amount, icon: Icon, color }: any) => (
     <div className={`p-4 rounded-2xl ${color} text-white`}><Icon size={24} /></div>
     <div>
       <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">{title}</p>
-      <h2 className="text-3xl font-black text-gray-900">${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h2>
+      <h2 className="text-3xl font-black text-gray-900">${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h2>
     </div>
   </div>
 );
@@ -589,7 +635,9 @@ const MiniStat = ({ label, value, icon: Icon, color, isPerc }: any) => (
   <div className="bg-white p-5 rounded-2xl border border-gray-100 text-center">
     <div className={`w-8 h-8 mx-auto rounded-full bg-gray-50 flex items-center justify-center mb-3 ${color}`}><Icon size={14} /></div>
     <p className="text-[8px] font-black text-gray-400 uppercase mb-1">{label}</p>
-    <h4 className={`text-lg font-black ${color}`}>{isPerc ? `${value.toFixed(1)}%` : `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}</h4>
+    <h4 className={`text-lg font-black ${color}`}>
+      {isPerc ? `${value.toFixed(1)}%` : `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+    </h4>
   </div>
 );
 
@@ -612,13 +660,13 @@ const ComparisonMetricCard = ({ label, currentVal, prevVal, currentYear, prevYea
           <div>
             <p className="text-[8px] font-black text-blue-500 uppercase">'{currentYear}</p>
             <h4 className="text-xl font-black text-gray-900 leading-none mt-1">
-                {isPerc ? `${currentVal.toFixed(1)}%` : `$${currentVal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+                {isPerc ? `${currentVal.toFixed(1)}%` : `$${currentVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
             </h4>
           </div>
           <div className="text-right">
             <p className="text-[8px] font-black text-gray-300 uppercase">'{prevYear}</p>
             <h4 className="text-lg font-black text-gray-400 leading-none mt-1">
-                {isPerc ? `${prevVal.toFixed(1)}%` : `$${prevVal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+                {isPerc ? `${prevVal.toFixed(1)}%` : `$${prevVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
             </h4>
           </div>
         </div>
