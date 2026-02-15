@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { 
@@ -13,10 +14,15 @@ import {
   Upload,
   Download,
   CreditCard,
-  CloudCheck,
-  CloudAlert,
+  CloudOff,
   ShieldCheck,
-  RotateCcw
+  RotateCcw,
+  AlertTriangle,
+  ChevronRight,
+  Shield,
+  Zap,
+  Info,
+  X
 } from 'lucide-react';
 import { 
   initDB, 
@@ -70,9 +76,95 @@ import Reconciliation from './components/Reconciliation';
 
 const LOCAL_UPDATE_KEY = 'fintrack_last_local_update';
 
-const getLocalDateString = () => {
-  const d = new Date();
+/**
+ * Robust date helpers to avoid UTC/Local shifts that cause infinite loops.
+ */
+const formatDateLocal = (d: Date) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+const parseDateLocal = (s: string) => {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
+
+const getLocalDateString = () => formatDateLocal(new Date());
+
+/**
+ * Shared utility for recurrence calculation.
+ * Uses local time strictly to prevent the infinite loops common with UTC string conversions.
+ */
+const calculateNextDate = (tmp: RecurringTemplate): string | null => {
+  if (!tmp.schedule || tmp.schedule.frequency === 'none') return null;
+
+  const s = tmp.schedule;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  let next = tmp.lastPostedDate ? parseDateLocal(tmp.lastPostedDate) : new Date(today);
+  next.setHours(0, 0, 0, 0);
+  
+  if (tmp.lastPostedDate) {
+    next.setDate(next.getDate() + 1);
+  }
+
+  if (s.frequency === 'daily') {
+    return formatDateLocal(next);
+  } 
+  
+  if (s.frequency === 'weekly') {
+    while (next.getDay() !== s.dayOfWeek) {
+      next.setDate(next.getDate() + 1);
+    }
+    return formatDateLocal(next);
+  } 
+  
+  if (s.frequency === 'monthly') {
+    if (s.dayOfMonth) {
+      let targetDate = new Date(next.getFullYear(), next.getMonth(), s.dayOfMonth);
+      if (targetDate < next) {
+        targetDate.setMonth(targetDate.getMonth() + 1, s.dayOfMonth);
+      }
+      return formatDateLocal(targetDate);
+    } 
+    
+    if (s.weekOfMonth && s.dayOfWeek !== undefined) {
+      const findInMonth = (date: Date, week: number, day: number) => {
+        let d = new Date(date.getFullYear(), date.getMonth(), 1);
+        let count = 0;
+        while (d.getMonth() === date.getMonth()) {
+          if (d.getDay() === day) {
+            count++;
+            if (count === week) return d;
+          }
+          d.setDate(d.getDate() + 1);
+        }
+        if (week === 5) { // Last week logic
+          d.setDate(d.getDate() - 1);
+          while (d.getDay() !== day) d.setDate(d.getDate() - 1);
+          return d;
+        }
+        return null;
+      };
+
+      let result = findInMonth(next, s.weekOfMonth, s.dayOfWeek);
+      if (!result || result < next) {
+        let nextMonth = new Date(next.getFullYear(), next.getMonth() + 1, 1);
+        result = findInMonth(nextMonth, s.weekOfMonth, s.dayOfWeek);
+      }
+      return result ? formatDateLocal(result) : null;
+    }
+  } 
+  
+  if (s.frequency === 'yearly') {
+    if (tmp.lastPostedDate) {
+      next = parseDateLocal(tmp.lastPostedDate);
+      next.setFullYear(next.getFullYear() + 1);
+    }
+    return formatDateLocal(next);
+  }
+
+  return null;
 };
 
 const App: React.FC = () => {
@@ -92,6 +184,9 @@ const App: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [isDriveConnected, setIsDriveConnected] = useState(false);
+  const [showCloudGuard, setShowCloudGuard] = useState(false);
+  
+  const [dueTemplates, setDueTemplates] = useState<RecurringTemplate[]>([]);
   
   const [initialListFilter, setInitialListFilter] = useState<{ value: string, type: any } | null>(null);
   const [targetMerchantName, setTargetMerchantName] = useState<string | null>(null);
@@ -121,35 +216,21 @@ const App: React.FC = () => {
       setPaymentMethods(pmeths);
       setStatements(stmts);
       setDrafts(dfts);
+
+      // Check for due items after templates are loaded
+      checkForDueItems(tmps);
     } catch (err) {
       console.error('Error refreshing data:', err);
     }
   }, [db]);
 
-  const captureSnapshot = async () => {
-    if (!db) return null;
-    return {
-      transactions: await getAllTransactions(db),
-      categories: await getAllCategories(db),
-      merchants: await getAllMerchants(db),
-      paymentMethods: await getAllPaymentMethods(db),
-      templates: await getAllTemplates(db),
-      statements: await getAllStatements(db),
-      drafts: await getAllDrafts(db)
-    };
-  };
-
-  const handleUndo = async () => {
-    if (!undoBuffer || !db) return;
-    try {
-      await importAllData(db, undoBuffer);
-      await refreshData();
-      setUndoBuffer(null);
-      showNotification('Action reverted');
-      markLocalChange();
-    } catch (err) {
-      showNotification('Undo failed', 'error');
-    }
+  const checkForDueItems = (tmps: RecurringTemplate[]) => {
+    const today = getLocalDateString();
+    const due = tmps.filter(t => {
+      const next = calculateNextDate(t);
+      return next && next <= today;
+    });
+    setDueTemplates(due);
   };
 
   const performSync = async (activeDb?: IDBDatabase, silent = false) => {
@@ -174,24 +255,15 @@ const App: React.FC = () => {
         }
       }
       if (shouldPush) {
-        const [txs, cats, vends, pmeths, tmps, stmts, dfts] = await Promise.all([
-          getAllTransactions(database),
-          getAllCategories(database),
-          getAllMerchants(database),
-          getAllPaymentMethods(database),
-          getAllTemplates(database),
-          getAllStatements(database),
-          getAllDrafts(database)
-        ]);
         const currentTimestamp = new Date().toISOString();
         await syncToDrive({
-          transactions: txs,
-          categories: cats,
-          merchants: vends,
-          paymentMethods: pmeths,
-          templates: tmps,
-          statements: stmts,
-          drafts: dfts,
+          transactions,
+          categories,
+          merchants,
+          paymentMethods,
+          templates,
+          statements,
+          drafts,
           lastUpdated: currentTimestamp
         } as any);
         localStorage.setItem(LOCAL_UPDATE_KEY, currentTimestamp);
@@ -213,13 +285,27 @@ const App: React.FC = () => {
         const database = await initDB();
         setDb(database);
         await refreshData(database);
+        
         await initGoogleAuth(() => {
           setIsDriveConnected(true);
+          setShowCloudGuard(false);
           performSync(database, true);
         });
+
         if (isDriveEnabledInStorage()) {
-          requestAccessToken(); 
+          requestAccessToken('none'); 
+        } else {
+          setShowCloudGuard(true);
         }
+
+        const handleVisibilityChange = () => {
+          if (document.visibilityState === 'hidden' && isAuthorized()) {
+            performSync(database, true);
+          }
+        };
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+
       } catch (err) {
         console.error('Failed to init app', err);
       } finally {
@@ -240,7 +326,7 @@ const App: React.FC = () => {
     setSyncStatus('syncing');
     syncTimeoutRef.current = window.setTimeout(() => {
       performSync(undefined, true);
-    }, 1500);
+    }, 3000); 
   };
 
   const handleManualSync = async () => {
@@ -254,6 +340,32 @@ const App: React.FC = () => {
   const showNotification = (message: string, type: 'success' | 'info' | 'error' = 'success', canUndo: boolean = false) => {
     setNotification({ message, type, canUndo });
     setTimeout(() => setNotification(null), type === 'error' ? 8000 : 5000);
+  };
+
+  const handleUndo = async () => {
+    if (!undoBuffer || !db) return;
+    try {
+      await importAllData(db, undoBuffer);
+      await refreshData();
+      setUndoBuffer(null);
+      showNotification('Action reverted');
+      markLocalChange();
+    } catch (err) {
+      showNotification('Undo failed', 'error');
+    }
+  };
+
+  const captureSnapshot = async () => {
+    if (!db) return null;
+    return {
+      transactions: await getAllTransactions(db),
+      categories: await getAllCategories(db),
+      merchants: await getAllMerchants(db),
+      paymentMethods: await getAllPaymentMethods(db),
+      templates: await getAllTemplates(db),
+      statements: await getAllStatements(db),
+      drafts: await getAllDrafts(db)
+    };
   };
 
   const handleExportData = async () => {
@@ -273,20 +385,18 @@ const App: React.FC = () => {
     }
   };
 
-  const parseLegacyDate = (dateVal: any): string => {
-    if (!dateVal) return getLocalDateString();
-    if (typeof dateVal === 'number') {
-      try {
-        const date = XLSX.SSF.parse_date_code(dateVal);
-        return `${date.y}-${String(date.m).padStart(2, '0')}-${String(date.d).padStart(2, '0')}`;
-      } catch (e) {
-        return getLocalDateString();
-      }
-    }
-    const dateStr = String(dateVal).trim();
-    const nativeDate = new Date(dateStr);
-    if (!isNaN(nativeDate.getTime())) return nativeDate.toISOString().split('T')[0];
-    return getLocalDateString();
+  const handleImportData = async (file: File) => {
+    if (!db) return;
+    try {
+      const snapshot = await captureSnapshot();
+      setUndoBuffer(snapshot);
+      const text = await file.text();
+      const data = JSON.parse(text);
+      await importAllData(db, data);
+      await refreshData();
+      showNotification('Data restored', 'success', true);
+      markLocalChange();
+    } catch (err) { showNotification('Restore failed', 'error'); }
   };
 
   const handleLegacyImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -301,26 +411,32 @@ const App: React.FC = () => {
       const worksheet = workbook.Sheets[sheetName];
       const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet, { raw: true });
       if (jsonData.length === 0) return;
+      
       const newCatsMap = new Map<string, Set<string>>();
       const newMerchantsSet = new Set<string>();
       let importedCount = 0;
       const tx = db.transaction(['transactions'], 'readwrite');
       const store = tx.objectStore('transactions');
+      
       for (const row of jsonData) {
         const keys = Object.keys(row);
         const dateKey = keys.find(k => k.toUpperCase().includes('DATE'));
         const vendorKey = keys.find(k => k.toUpperCase().includes('VENDOR') || k.toUpperCase().includes('MERCHANT'));
         const amountKey = keys.find(k => k.toUpperCase().includes('AMOU'));
         if (!dateKey || !amountKey) continue;
+        
         const amount = parseFloat(String(row[amountKey]).replace(/[$,\s]/g, '')) || 0;
         const categoryFull = String(row['Category'] || 'Other');
         const [catName, subName] = categoryFull.includes(':') ? categoryFull.split(':').map(s => s.trim()) : [categoryFull, ''];
+        
         if (catName) {
           if (!newCatsMap.has(catName)) newCatsMap.set(catName, new Set());
           if (subName) newCatsMap.get(catName)!.add(subName);
         }
+        
         const merchantName = String(row[vendorKey] || '').trim();
         if (merchantName) newMerchantsSet.add(merchantName);
+        
         const item: Transaction = {
           date: parseLegacyDate(row[dateKey]),
           merchant: merchantName || 'Undefined',
@@ -333,6 +449,7 @@ const App: React.FC = () => {
         store.add(item);
         importedCount++;
       }
+      
       tx.oncomplete = async () => {
         for (const [catName, subs] of newCatsMap.entries()) {
           const existing = categories.find(c => c.name.toLowerCase() === catName.toLowerCase());
@@ -350,24 +467,27 @@ const App: React.FC = () => {
     } catch (err) { showNotification('Excel import failed.', 'error'); }
   };
 
-  const handleImportData = async (file: File) => {
-    if (!db) return;
-    try {
-      const snapshot = await captureSnapshot();
-      setUndoBuffer(snapshot);
-      const text = await file.text();
-      const data = JSON.parse(text);
-      await importAllData(db, data);
-      await refreshData();
-      showNotification('Data restored', 'success', true);
-      markLocalChange();
-    } catch (err) { showNotification('Restore failed', 'error'); }
+  const parseLegacyDate = (dateVal: any): string => {
+    if (!dateVal) return getLocalDateString();
+    if (typeof dateVal === 'number') {
+      try {
+        const date = XLSX.SSF.parse_date_code(dateVal);
+        return `${date.y}-${String(date.m).padStart(2, '0')}-${String(date.d).padStart(2, '0')}`;
+      } catch (e) {
+        return getLocalDateString();
+      }
+    }
+    const dateStr = String(dateVal).trim();
+    const nativeDate = new Date(dateStr);
+    if (!isNaN(nativeDate.getTime())) return formatDateLocal(nativeDate);
+    return getLocalDateString();
   };
 
   const handleAddTransaction = async (t: Transaction) => {
     if (!db) return;
-    await addTransaction(db, t);
-    await refreshData();
+    const newId = await addTransaction(db, t);
+    const completeTx = { ...t, id: newId };
+    setTransactions(prev => [...prev, completeTx]);
     showNotification('Transaction added');
     markLocalChange();
   };
@@ -375,7 +495,7 @@ const App: React.FC = () => {
   const handleUpdateTransaction = async (t: Transaction) => {
     if (!db) return;
     await updateTransaction(db, t);
-    await refreshData();
+    setTransactions(prev => prev.map(item => item.id === t.id ? t : item));
     showNotification('Transaction updated');
     markLocalChange();
   };
@@ -385,7 +505,8 @@ const App: React.FC = () => {
     const snapshot = await captureSnapshot();
     setUndoBuffer(snapshot);
     await bulkUpdateTransactions(db, updates);
-    await refreshData();
+    const updateMap = new Map(updates.map(u => [u.id, u]));
+    setTransactions(prev => prev.map(item => item.id && updateMap.has(item.id) ? updateMap.get(item.id)! : item));
     showNotification(`${updates.length} items updated`, 'success', true);
     markLocalChange();
   };
@@ -395,7 +516,7 @@ const App: React.FC = () => {
     const snapshot = await captureSnapshot();
     setUndoBuffer(snapshot);
     await deleteTransaction(db, id);
-    await refreshData();
+    setTransactions(prev => prev.filter(t => t.id !== id));
     showNotification('Transaction deleted', 'success', true);
     markLocalChange();
   };
@@ -405,25 +526,26 @@ const App: React.FC = () => {
     const snapshot = await captureSnapshot();
     setUndoBuffer(snapshot);
     await deleteTransactions(db, ids);
-    await refreshData();
+    const idSet = new Set(ids);
+    setTransactions(prev => prev.filter(t => t.id && !idSet.has(t.id)));
     showNotification(`${ids.length} transactions deleted`, 'success', true);
     markLocalChange();
   };
 
-  const handleAddCategory = (c: Category) => addCategory(db!, c).then(() => { refreshData(); markLocalChange(); });
+  const handleAddCategory = (c: Category) => addCategory(db!, c).then(id => { 
+    setCategories(prev => [...prev, { ...c, id }]);
+    markLocalChange(); 
+  });
   
   const handleUpdateCategory = async (newCat: Category) => {
     if (!db) return;
     const oldCat = categories.find(c => c.id === newCat.id);
     if (!oldCat) return;
     await updateCategory(db, newCat);
+    setCategories(prev => prev.map(c => c.id === newCat.id ? newCat : c));
     if (oldCat.name !== newCat.name) {
-      const txsToUpdate = transactions.filter(t => t.category === oldCat.name);
-      if (txsToUpdate.length > 0) {
-        await bulkUpdateTransactions(db, txsToUpdate.map(t => ({ ...t, category: newCat.name })));
-      }
+      setTransactions(prev => prev.map(t => t.category === oldCat.name ? { ...t, category: newCat.name } : t));
     }
-    await refreshData();
     showNotification('Category updated');
     markLocalChange();
   };
@@ -432,7 +554,7 @@ const App: React.FC = () => {
     const snapshot = await captureSnapshot();
     setUndoBuffer(snapshot);
     await deleteCategory(db!, id);
-    await refreshData(); 
+    setCategories(prev => prev.filter(c => c.id !== id));
     showNotification('Category deleted', 'success', true);
     markLocalChange();
   };
@@ -442,7 +564,7 @@ const App: React.FC = () => {
     const snapshot = await captureSnapshot();
     setUndoBuffer(snapshot);
     await mergeCategories(db, sourceNames, targetCategory, sourceIds);
-    await refreshData();
+    await refreshData(); 
     showNotification('Categories merged successfully', 'success', true);
     markLocalChange();
   };
@@ -452,7 +574,6 @@ const App: React.FC = () => {
     const sourceCat = categories.find(c => c.id === sourceCatId);
     const targetCat = categories.find(c => c.name === targetCatName);
     if (!sourceCat || !targetCat) return;
-
     const snapshot = await captureSnapshot();
     setUndoBuffer(snapshot);
     await moveSubCategory(db, subName, sourceCat, targetCat);
@@ -464,8 +585,9 @@ const App: React.FC = () => {
   const handleDeleteSubCategory = async (catId: number, subName: string) => {
     const cat = categories.find(c => c.id === catId);
     if (cat) {
-      await updateCategory(db!, { ...cat, subCategories: (cat.subCategories || []).filter(s => s !== subName) });
-      await refreshData();
+      const updated = { ...cat, subCategories: (cat.subCategories || []).filter(s => s !== subName) };
+      await updateCategory(db!, updated);
+      setCategories(prev => prev.map(c => c.id === catId ? updated : c));
       markLocalChange();
     }
   };
@@ -475,30 +597,28 @@ const App: React.FC = () => {
     const cat = categories.find(c => c.id === catId);
     if (!cat) return;
     const updatedSubs = (cat.subCategories || []).map(s => s === oldName ? newName : s);
-    await updateCategory(db, { ...cat, subCategories: updatedSubs });
-    const txsToUpdate = transactions.filter(t => t.category === cat.name && t.subCategory === oldName);
-    if (txsToUpdate.length > 0) {
-      await bulkUpdateTransactions(db, txsToUpdate.map(t => ({ ...t, subCategory: newName })));
-    }
-    await refreshData();
+    const updatedCat = { ...cat, subCategories: updatedSubs };
+    await updateCategory(db, updatedCat);
+    setCategories(prev => prev.map(c => c.id === catId ? updatedCat : c));
+    setTransactions(prev => prev.map(t => (t.category === cat.name && t.subCategory === oldName) ? { ...t, subCategory: newName } : t));
     showNotification('Sub-category renamed');
     markLocalChange();
   };
 
-  const handleAddMerchant = (v: Merchant) => addMerchant(db!, v).then(() => { refreshData(); markLocalChange(); });
+  const handleAddMerchant = (v: Merchant) => addMerchant(db!, v).then(id => { 
+    setMerchants(prev => [...prev, { ...v, id }]);
+    markLocalChange(); 
+  });
   
   const handleUpdateMerchant = async (newMerchant: Merchant) => {
     if (!db) return;
     const oldMerchant = merchants.find(m => m.id === newMerchant.id);
     if (!oldMerchant) return;
     await updateMerchant(db, newMerchant);
+    setMerchants(prev => prev.map(m => m.id === newMerchant.id ? newMerchant : m));
     if (oldMerchant.name !== newMerchant.name) {
-      const txsToUpdate = transactions.filter(t => t.merchant === oldMerchant.name);
-      if (txsToUpdate.length > 0) {
-        await bulkUpdateTransactions(db, txsToUpdate.map(t => ({ ...t, merchant: newMerchant.name })));
-      }
+      setTransactions(prev => prev.map(t => t.merchant === oldMerchant.name ? { ...t, merchant: newMerchant.name } : t));
     }
-    await refreshData();
     showNotification('Merchant updated');
     markLocalChange();
   };
@@ -507,7 +627,7 @@ const App: React.FC = () => {
     const snapshot = await captureSnapshot();
     setUndoBuffer(snapshot);
     await deleteMerchant(db!, id);
-    await refreshData();
+    setMerchants(prev => prev.filter(m => m.id !== id));
     showNotification('Merchant deleted', 'success', true);
     markLocalChange();
   };
@@ -522,15 +642,25 @@ const App: React.FC = () => {
     markLocalChange();
   };
 
-  const handleAddPaymentMethod = (p: PaymentMethod) => addPaymentMethod(db!, p).then(() => { refreshData(); markLocalChange(); });
-  const handleUpdatePaymentMethod = (p: PaymentMethod) => updatePaymentMethod(db!, p).then(() => { refreshData(); markLocalChange(); });
-  const handleDeletePaymentMethod = (id: number) => deletePaymentMethod(db!, id).then(() => { refreshData(); markLocalChange(); });
+  const handleAddPaymentMethod = (p: PaymentMethod) => addPaymentMethod(db!, p).then(id => { 
+    setPaymentMethods(prev => [...prev, { ...p, id }]);
+    markLocalChange(); 
+  });
+  const handleUpdatePaymentMethod = (p: PaymentMethod) => updatePaymentMethod(db!, p).then(() => {
+    setPaymentMethods(prev => prev.map(item => item.id === p.id ? p : item));
+    markLocalChange();
+  });
+  const handleDeletePaymentMethod = (id: number) => deletePaymentMethod(db!, id).then(() => {
+    setPaymentMethods(prev => prev.filter(p => p.id !== id));
+    markLocalChange();
+  });
 
   const handleAddTemplate = (t: RecurringTemplate) => {
-    addTemplate(db!, t).then(() => {
-      refreshData();
+    addTemplate(db!, t).then(id => {
+      setTemplates(prev => [...prev, { ...t, id }]);
       showNotification('Template created');
       markLocalChange();
+      checkForDueItems([...templates, { ...t, id }]);
     });
   };
 
@@ -546,10 +676,11 @@ const App: React.FC = () => {
       type: t.type,
       schedule: { frequency: 'none' }
     };
-    addTemplate(db!, tmp).then(() => {
-      refreshData();
+    addTemplate(db!, tmp).then(id => {
+      setTemplates(prev => [...prev, { ...tmp, id }]);
       showNotification('Saved to Recurring');
       markLocalChange();
+      checkForDueItems([...templates, { ...tmp, id }]);
     });
   };
 
@@ -560,27 +691,101 @@ const App: React.FC = () => {
       amount: tmp.amount, date: today, category: tmp.category, subCategory: tmp.subCategory, merchant: tmp.merchant || 'Undefined',
       paymentMethod: tmp.paymentMethod, description: tmp.description, type: tmp.type, fromTemplate: true
     };
-    await addTransaction(db, tx);
-    await updateTemplate(db, { ...tmp, lastPostedDate: today });
-    await refreshData();
+    const newId = await addTransaction(db, tx);
+    const updatedTmp = { ...tmp, lastPostedDate: today };
+    await updateTemplate(db, updatedTmp);
+    setTransactions(prev => [...prev, { ...tx, id: newId }]);
+    setTemplates(prev => prev.map(t => t.id === tmp.id ? updatedTmp : t));
     showNotification('Transaction posted');
     markLocalChange();
+    checkForDueItems(templates.map(t => t.id === tmp.id ? updatedTmp : t));
   };
 
-  const handleDeleteTemplate = (id: number) => deleteTemplate(db!, id).then(() => { refreshData(); markLocalChange(); });
-  const handleUpdateTemplate = (t: RecurringTemplate) => updateTemplate(db!, t).then(() => { refreshData(); markLocalChange(); });
+  const handlePostAllDue = async () => {
+    if (!db || dueTemplates.length === 0) return;
+    
+    setIsSyncing(true); 
+    const today = getLocalDateString();
+    let totalPosted = 0;
+    const MAX_ITERATIONS = 500; // Safety guard against logic spin
+    
+    try {
+      const newTransactions: Transaction[] = [];
+      const updatedTemplates: RecurringTemplate[] = [...templates];
+
+      for (const dueItem of dueTemplates) {
+        let currentTemplate = { ...dueItem };
+        let nextDateStr = calculateNextDate(currentTemplate);
+        let iterations = 0;
+        
+        // Loop while nextDate is in the past or today, up to the safety limit
+        while (nextDateStr && nextDateStr <= today && iterations < MAX_ITERATIONS) {
+          const tx: Transaction = {
+            amount: currentTemplate.amount,
+            date: nextDateStr,
+            category: currentTemplate.category,
+            subCategory: currentTemplate.subCategory,
+            merchant: currentTemplate.merchant || 'Undefined',
+            paymentMethod: currentTemplate.paymentMethod,
+            description: currentTemplate.description,
+            type: currentTemplate.type,
+            fromTemplate: true
+          };
+          newTransactions.push(tx);
+          totalPosted++;
+          
+          currentTemplate.lastPostedDate = nextDateStr;
+          nextDateStr = calculateNextDate(currentTemplate);
+          iterations++;
+        }
+        
+        const idx = updatedTemplates.findIndex(t => t.id === currentTemplate.id);
+        if (idx !== -1) updatedTemplates[idx] = currentTemplate;
+      }
+
+      const txDB = db.transaction(['transactions', 'templates'], 'readwrite');
+      const txStore = txDB.objectStore('transactions');
+      const tmpStore = txDB.objectStore('templates');
+      
+      newTransactions.forEach(t => txStore.add(t));
+      updatedTemplates.forEach(t => tmpStore.put(t));
+
+      txDB.oncomplete = () => {
+        refreshData();
+        setDueTemplates([]);
+        showNotification(`Auto-posted ${totalPosted} transactions.`, 'success');
+        markLocalChange();
+        setIsSyncing(false);
+      };
+    } catch (err) {
+      console.error('Bulk post failed', err);
+      showNotification('Automatic posting failed', 'error');
+      setIsSyncing(false);
+    }
+  };
+
+  const handleDeleteTemplate = (id: number) => deleteTemplate(db!, id).then(() => {
+    setTemplates(prev => prev.filter(t => t.id !== id));
+    markLocalChange();
+    checkForDueItems(templates.filter(t => t.id !== id));
+  });
+  const handleUpdateTemplate = (t: RecurringTemplate) => updateTemplate(db!, t).then(() => {
+    setTemplates(prev => prev.map(item => item.id === t.id ? t : item));
+    markLocalChange();
+    checkForDueItems(templates.map(item => item.id === t.id ? t : item));
+  });
 
   const handleReconcile = async (statement: StatementRecord, draftId?: number) => {
     if (!db) return;
     const txIds = new Set(statement.transactionIds);
-    const updatedTxs = transactions.map(t => {
-      if (t.id && txIds.has(t.id)) return { ...t, reconciled: true, clearedAt: statement.statementDate };
-      return t;
-    });
-    await bulkUpdateTransactions(db, updatedTxs);
-    await addStatement(db, statement);
-    if (draftId !== undefined) await deleteDraft(db, draftId);
-    await refreshData();
+    await bulkUpdateTransactions(db, transactions.filter(t => t.id && txIds.has(t.id)).map(t => ({ ...t, reconciled: true, clearedAt: statement.statementDate })));
+    const newId = await addStatement(db, statement);
+    if (draftId !== undefined) {
+      await deleteDraft(db, draftId);
+      setDrafts(prev => prev.filter(d => d.id !== draftId));
+    }
+    setStatements(prev => [...prev, { ...statement, id: newId }]);
+    setTransactions(prev => prev.map(t => (t.id && txIds.has(t.id)) ? { ...t, reconciled: true, clearedAt: statement.statementDate } : t));
     showNotification('Statement reconciled');
     markLocalChange();
   };
@@ -588,7 +793,11 @@ const App: React.FC = () => {
   const handleSaveDraft = async (draft: DraftStatement) => {
     if (!db) return;
     await saveDraft(db, draft);
-    await refreshData();
+    setDrafts(prev => {
+      const existing = prev.find(d => d.id === draft.id);
+      if (existing) return prev.map(d => d.id === draft.id ? draft : d);
+      return [...prev, draft];
+    });
     showNotification('Progress saved');
     markLocalChange();
   };
@@ -596,7 +805,7 @@ const App: React.FC = () => {
   const handleDeleteDraft = async (id: number) => {
     if (!db) return;
     await deleteDraft(db, id);
-    await refreshData();
+    setDrafts(prev => prev.filter(d => d.id !== id));
     showNotification('Draft deleted');
     markLocalChange();
   };
@@ -606,13 +815,10 @@ const App: React.FC = () => {
     const stmt = statements.find(s => s.id === id);
     if (!stmt) return;
     const txIds = new Set(stmt.transactionIds);
-    const updatedTxs = transactions.map(t => {
-      if (t.id && txIds.has(t.id)) return { ...t, reconciled: false, clearedAt: undefined };
-      return t;
-    });
-    await bulkUpdateTransactions(db, updatedTxs);
+    await bulkUpdateTransactions(db, transactions.filter(t => t.id && txIds.has(t.id)).map(t => ({ ...t, reconciled: false, clearedAt: undefined })));
     await deleteStatement(db, id);
-    await refreshData();
+    setStatements(prev => prev.filter(s => s.id !== id));
+    setTransactions(prev => prev.map(t => (t.id && txIds.has(t.id)) ? { ...t, reconciled: false, clearedAt: undefined } : t));
     showNotification('Reconciliation undone');
     markLocalChange();
   };
@@ -621,10 +827,38 @@ const App: React.FC = () => {
 
   return (
     <div className="flex min-h-screen bg-gray-50 text-gray-900">
-      <aside className="w-20 lg:w-64 bg-white border-r border-gray-200 p-4 flex flex-col fixed h-full z-10">
+      {showCloudGuard && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-xl z-[2000] flex items-center justify-center p-6">
+          <div className="bg-white w-full max-w-lg rounded-[48px] shadow-2xl border border-white/20 p-10 text-center animate-in zoom-in-95 duration-500">
+            <div className="w-24 h-24 bg-blue-50 text-blue-600 rounded-[32px] flex items-center justify-center mx-auto mb-8 shadow-inner">
+              <Cloud size={48} className="animate-pulse" />
+            </div>
+            <h2 className="text-3xl font-black text-gray-900 uppercase tracking-tighter mb-4">Secure Cloud Vault</h2>
+            <p className="text-gray-500 text-sm leading-relaxed mb-10 max-w-sm mx-auto font-medium">
+              Link your Google Drive to enable <span className="text-blue-600 font-bold">Automatic Syncing</span> across all your devices. Your data stays private in your own cloud storage.
+            </p>
+            <div className="flex flex-col gap-4">
+              <button 
+                onClick={handleManualSync}
+                className="w-full py-5 bg-blue-600 text-white rounded-[24px] font-black uppercase text-xs tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 active:scale-[0.98] transition-all flex items-center justify-center gap-3"
+              >
+                <Cloud size={20} /> Authorize & Link Drive
+              </button>
+              <button 
+                onClick={() => setShowCloudGuard(false)}
+                className="w-full py-4 text-gray-400 font-black uppercase text-[10px] tracking-widest hover:text-gray-600 transition-all"
+              >
+                Proceed Offline Only
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <aside className="w-20 lg:w-64 bg-white border-r border-gray-200 p-4 flex flex-col fixed h-full z-10 shadow-sm">
         <div className="mb-8 px-4 flex items-center gap-3">
-          <div className="bg-blue-600 p-2 rounded-lg"><LayoutDashboard className="text-white" size={24} /></div>
-          <h1 className="text-xl font-bold hidden lg:block uppercase tracking-tighter">Dad Finance</h1>
+          <div className="bg-blue-600 p-2 rounded-lg shadow-md"><LayoutDashboard className="text-white" size={24} /></div>
+          <h1 className="text-xl font-black hidden lg:block uppercase tracking-tighter">Dad Finance</h1>
         </div>
         <nav className="flex-1 space-y-2">
           <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
@@ -636,25 +870,25 @@ const App: React.FC = () => {
           <NavItem view="reconciliation" icon={ShieldCheck} label="Reconciliation" />
         </nav>
         <div className="border-t pt-4 space-y-2">
-           <button onClick={handleManualSync} className={`flex flex-col gap-1 px-4 py-2 rounded-xl w-full text-left transition-all ${syncStatus === 'error' ? 'bg-rose-50' : 'hover:bg-gray-100'}`}>
+           <button onClick={handleManualSync} className={`flex flex-col gap-1 px-4 py-3 rounded-2xl w-full text-left transition-all ${syncStatus === 'error' ? 'bg-rose-50' : 'hover:bg-gray-50'}`}>
              <div className="flex items-center gap-3">
                {syncStatus === 'syncing' ? ( <RefreshCcw size={18} className="animate-spin text-blue-500" /> ) 
-               : syncStatus === 'error' ? ( <CloudAlert size={18} className="text-rose-500" /> ) 
+               : syncStatus === 'error' ? ( <CloudOff size={18} className="text-rose-500" /> ) 
                : syncStatus === 'success' ? ( <Cloud size={18} className="text-emerald-500" /> ) 
                : ( <Cloud size={18} className={isDriveConnected ? 'text-blue-500' : 'text-gray-400'} /> )}
                <span className={`hidden lg:inline text-[10px] font-black uppercase tracking-tight ${syncStatus === 'error' ? 'text-rose-600' : 'text-gray-500'}`}>
-                 {syncStatus === 'syncing' ? 'Syncing...' : syncStatus === 'error' ? 'Sync Failed' : isDriveConnected ? 'Drive Linked' : 'Link Drive'}
+                 {syncStatus === 'syncing' ? 'Syncing...' : syncStatus === 'error' ? 'Sync Failed' : isDriveConnected ? 'Drive Active' : 'Link Cloud'}
                </span>
              </div>
-             {lastSyncedAt && !isSyncing && ( <span className="hidden lg:inline text-[8px] font-bold text-gray-300 ml-7 uppercase">Synced {lastSyncedAt}</span> )}
+             {lastSyncedAt && !isSyncing && ( <span className="hidden lg:inline text-[8px] font-bold text-gray-300 ml-7 uppercase">Checked {lastSyncedAt}</span> )}
            </button>
-           <button onClick={() => setActiveView('backups')} className="flex items-center gap-3 px-4 py-2 rounded-xl w-full text-left text-gray-500 hover:bg-gray-100 transition-all">
-             <Database size={18} /> <span className="hidden lg:inline text-xs font-bold">Backups</span>
+           <button onClick={() => setActiveView('backups')} className="flex items-center gap-3 px-4 py-3 rounded-2xl w-full text-left text-gray-400 hover:bg-gray-50 hover:text-gray-900 transition-all">
+             <Database size={18} /> <span className="hidden lg:inline text-xs font-black uppercase tracking-tight">Archives</span>
            </button>
            <div className="relative group/imp">
               <input type="file" accept=".xls,.xlsx,.csv" ref={legacyFileInputRef} onChange={handleLegacyImport} className="hidden" />
-              <button onClick={() => legacyFileInputRef.current?.click()} className="flex items-center gap-3 px-4 py-2 rounded-xl w-full text-left text-gray-500 hover:bg-blue-50 hover:text-blue-600 transition-all">
-                <Upload size={18} /> <span className="hidden lg:inline text-xs font-bold">Import Excel</span>
+              <button onClick={() => legacyFileInputRef.current?.click()} className="flex items-center gap-3 px-4 py-3 rounded-2xl w-full text-left text-gray-400 hover:bg-blue-50 hover:text-blue-600 transition-all">
+                <Upload size={18} /> <span className="hidden lg:inline text-xs font-black uppercase tracking-tight">Import Excel</span>
               </button>
            </div>
         </div>
@@ -663,14 +897,11 @@ const App: React.FC = () => {
       <main className="flex-1 ml-20 lg:ml-64 p-4 lg:p-10">
         {notification && (
           <div className="fixed top-6 right-6 z-[1000]">
-            <div className={`px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 text-white animate-in slide-in-from-right duration-300 ${notification.type === 'error' ? 'bg-rose-600' : notification.type === 'info' ? 'bg-amber-600' : 'bg-emerald-600'}`}>
+            <div className={`px-6 py-3 rounded-[20px] shadow-2xl flex items-center gap-3 text-white animate-in slide-in-from-right duration-300 ${notification.type === 'error' ? 'bg-rose-600' : notification.type === 'info' ? 'bg-amber-600' : 'bg-emerald-600'}`}>
               <CheckCircle2 size={20} /> 
-              <span className="font-medium text-sm font-bold uppercase">{notification.message}</span>
+              <span className="font-medium text-sm font-bold uppercase tracking-tight">{notification.message}</span>
               {notification.canUndo && (
-                <button 
-                  onClick={handleUndo}
-                  className="ml-4 px-3 py-1 bg-white/20 hover:bg-white/40 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all"
-                >
+                <button onClick={handleUndo} className="ml-4 px-3 py-1 bg-white/20 hover:bg-white/40 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all">
                   <RotateCcw size={12} /> Undo
                 </button>
               )}
@@ -678,6 +909,40 @@ const App: React.FC = () => {
           </div>
         )}
         <div className="max-w-7xl mx-auto">
+          {dueTemplates.length > 0 && activeView === 'dashboard' && (
+            <div className="mb-8 bg-blue-600 text-white p-6 rounded-[32px] shadow-2xl shadow-blue-100 border border-blue-500/30 flex flex-col md:flex-row items-center justify-between gap-6 animate-in slide-in-from-top-4 duration-500">
+              <div className="flex items-center gap-5">
+                <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center text-white shrink-0 shadow-inner">
+                  <Zap size={28} className="animate-pulse" />
+                </div>
+                <div>
+                  <h4 className="text-xl font-black uppercase tracking-tight leading-tight">{dueTemplates.length} Recurring items are due</h4>
+                  <p className="text-blue-100 text-[10px] font-bold uppercase tracking-widest mt-1 opacity-80">Pending entries are waiting for your approval to hit the ledger.</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 w-full md:w-auto">
+                <button 
+                  onClick={handlePostAllDue}
+                  className="flex-1 md:flex-none h-14 px-8 bg-white text-blue-600 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl hover:bg-blue-50 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+                >
+                  <Zap size={16} /> Post All
+                </button>
+                <button 
+                  onClick={() => setActiveView('templates')}
+                  className="flex-1 md:flex-none h-14 px-8 bg-blue-700/50 text-white rounded-2xl font-black uppercase text-xs tracking-widest border border-blue-400/20 hover:bg-blue-800 transition-all flex items-center justify-center gap-2"
+                >
+                  <ListOrdered size={16} /> Review
+                </button>
+                <button 
+                  onClick={() => setDueTemplates([])}
+                  className="p-3 text-white/50 hover:text-white transition-all"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+          )}
+
           {activeView === 'dashboard' && <Dashboard transactions={transactions} categories={categories} />}
           {activeView === 'list' && (
             <TransactionList 
@@ -695,14 +960,9 @@ const App: React.FC = () => {
           )}
           {activeView === 'reconciliation' && (
             <Reconciliation 
-              transactions={transactions} 
-              paymentMethods={paymentMethods} 
-              statements={statements}
-              drafts={drafts}
-              onReconcile={handleReconcile}
-              onDeleteStatement={handleDeleteStatement}
-              onSaveDraft={handleSaveDraft}
-              onDeleteDraft={handleDeleteDraft}
+              transactions={transactions} paymentMethods={paymentMethods} statements={statements} drafts={drafts}
+              onReconcile={handleReconcile} onDeleteStatement={handleDeleteStatement}
+              onSaveDraft={handleSaveDraft} onDeleteDraft={handleDeleteDraft}
             />
           )}
           {activeView === 'templates' && <Templates templates={templates} onPost={handlePostTemplate} onDelete={handleDeleteTemplate} onUpdate={handleUpdateTemplate} onAdd={handleAddTemplate} onAddPaymentMethod={handleAddPaymentMethod} transactions={transactions} categories={categories} merchants={merchants} paymentMethods={paymentMethods} />}
@@ -710,8 +970,7 @@ const App: React.FC = () => {
             <Management 
               mode={activeView as any} categories={categories} transactions={transactions} 
               onAddCategory={handleAddCategory} onUpdateCategory={handleUpdateCategory} onDeleteCategory={handleDeleteCategory} onDeleteSubCategory={handleDeleteSubCategory} onRenameSubCategory={handleRenameSubCategory}
-              onMergeCategories={handleMergeCategories}
-              onMoveSubCategory={handleMoveSubCategory}
+              onMergeCategories={handleMergeCategories} onMoveSubCategory={handleMoveSubCategory}
               merchants={merchants} onAddMerchant={handleAddMerchant} onUpdateMerchant={handleUpdateMerchant} onDeleteMerchant={handleDeleteMerchant} onMergeMerchants={handleMergeMerchants}
               paymentMethods={paymentMethods} onAddPaymentMethod={handleAddPaymentMethod} onUpdatePaymentMethod={handleUpdatePaymentMethod} onDeletePaymentMethod={handleDeletePaymentMethod}
               onExport={handleExportData} onImport={handleImportData}
@@ -728,8 +987,8 @@ const App: React.FC = () => {
     return (
       <button
         onClick={() => setActiveView(view)}
-        className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all w-full text-left font-bold text-xs uppercase tracking-tight ${
-          activeView === view ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-gray-400 hover:bg-gray-100'
+        className={`flex items-center gap-3 px-4 py-3 rounded-2xl transition-all w-full text-left font-black text-xs uppercase tracking-tight ${
+          activeView === view ? 'bg-blue-600 text-white shadow-xl shadow-blue-100/50' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-900'
         }`}
       >
         <Icon size={18} />

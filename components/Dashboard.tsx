@@ -8,7 +8,7 @@ import {
   Wallet, TrendingUp, TrendingDown, Table as TableIcon, 
   Store, Layers, Calendar as CalendarIcon, RotateCcw, ChevronDown, BarChart3, Sigma, Calculator,
   ArrowUpDown, MoveUp, MoveDown, History, ChevronRight, Hash, DollarSign, FileText, ListOrdered,
-  ChevronLeft, LayoutList, SortAsc, SortDesc
+  ChevronLeft, LayoutList, SortAsc, SortDesc, CalendarDays
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -17,6 +17,7 @@ interface DashboardProps {
 }
 
 type DashboardTab = 'overview' | 'ledger' | 'comparison' | 'merchants' | 'categories';
+type MerchantViewMode = 'list' | 'calendar' | 'yearly';
 
 const COLORS = ['#2563EB', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#6366F1', '#14B8A6', '#F97316'];
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -159,7 +160,7 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
   const [drillDownMerchant, setDrillDownMerchant] = useState<string | null>(null);
 
   // Merchant View State
-  const [merchantViewMode, setMerchantViewMode] = useState<'list' | 'calendar'>('list');
+  const [merchantViewMode, setMerchantViewMode] = useState<MerchantViewMode>('yearly');
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [merchantSort, setMerchantSort] = useState<{ key: 'date' | 'amount', dir: 'asc' | 'desc' }>({ key: 'date', dir: 'desc' });
 
@@ -420,31 +421,42 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
     }
   }, [drillDownMerchant, merchantDetailTransactions]);
 
-  // Calendar Logic for Merchant Detail
-  const calendarData = useMemo(() => {
-    const year = calendarDate.getFullYear();
-    const month = calendarDate.getMonth();
+  // Monthly Calendar Cell logic
+  const getCalendarMonthData = (year: number, month: number, txs: Transaction[]) => {
     const firstDay = new Date(year, month, 1).getDay();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
-    
     const days = [];
-    // Padding for start of month
-    for (let i = 0; i < firstDay; i++) {
-      days.push({ day: null, date: null, txs: [] });
-    }
-    // Days of the month
+    for (let i = 0; i < firstDay; i++) days.push({ day: null, date: null, txs: [] });
     for (let i = 1; i <= daysInMonth; i++) {
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
-      const dayTxs = merchantDetailTransactions.filter(t => t.date === dateStr);
+      const dayTxs = txs.filter(t => t.date === dateStr);
       days.push({ day: i, date: dateStr, txs: dayTxs });
     }
-    
-    // Crucial: Fixed grid to always show 6 rows (42 cells) to handle any month span
-    while (days.length < 42) {
-      days.push({ day: null, date: null, txs: [] });
-    }
-
+    while (days.length < 42) days.push({ day: null, date: null, txs: [] });
     return days;
+  };
+
+  // 3-Month Window for Timeline View
+  const scrollableCalendarWindow = useMemo(() => {
+    if (!drillDownMerchant) return [];
+    const months = [];
+    for (let i = 0; i < 3; i++) {
+      const targetDate = new Date(calendarDate);
+      targetDate.setMonth(calendarDate.getMonth() + i);
+      const year = targetDate.getFullYear();
+      const monthIdx = targetDate.getMonth();
+      months.push({
+        name: FULL_MONTH_NAMES[monthIdx],
+        year,
+        days: getCalendarMonthData(year, monthIdx, merchantDetailTransactions)
+      });
+    }
+    return months;
+  }, [calendarDate, merchantDetailTransactions, drillDownMerchant]);
+
+  // Current selected month view data
+  const calendarData = useMemo(() => {
+    return getCalendarMonthData(calendarDate.getFullYear(), calendarDate.getMonth(), merchantDetailTransactions);
   }, [calendarDate, merchantDetailTransactions]);
 
   const merchantInsightStats = useMemo(() => {
@@ -475,7 +487,7 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
     setDrillDownCategory(null);
     setDrillDownSubCategory(null);
     setDrillDownMerchant(null);
-    setMerchantViewMode('list');
+    setMerchantViewMode('yearly');
     setMerchantSort({ key: 'date', dir: 'desc' });
   };
 
@@ -775,159 +787,145 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
                 )}
               </div>
 
-              <div className="flex flex-col md:flex-row items-center gap-10 h-[420px] relative">
+              {/* Explorer Container - Adjusted proportions for Detail View */}
+              <div className="flex flex-col md:flex-row items-stretch gap-6 min-h-[400px] lg:h-[420px] relative">
                 {drillDownMerchant ? (
-                  /* Detail View: Merchant Insight Cards */
-                  <div className="w-full flex flex-col md:flex-row gap-8 items-center h-full animate-in fade-in slide-in-from-bottom-2 duration-300">
-                    <div className="w-full md:w-1/2 h-full flex flex-col justify-center space-y-4">
-                      <div className="p-6 bg-blue-50 rounded-[32px] border border-blue-100 shadow-sm text-center">
-                        <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center text-white mx-auto mb-4 shadow-lg shadow-blue-100">
-                          <Store size={24} />
+                  /* Detail View: Merchant Insight Cards - Tighter and Flipped Proportions */
+                  <div className="w-full flex flex-col md:flex-row gap-5 items-stretch h-full animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    <div className="w-full md:w-[35%] h-full flex flex-col justify-between space-y-2">
+                      <div className="p-5 bg-blue-50 rounded-[24px] border border-blue-100 shadow-sm text-center flex-1 flex flex-col justify-center">
+                        <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center text-white mx-auto mb-2 shadow-lg shadow-blue-100">
+                          <Store size={20} />
                         </div>
-                        <h4 className="text-sm font-black text-blue-900 uppercase tracking-[0.2em] mb-1">{drillDownMerchant}</h4>
-                        <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Aggregate Data</p>
+                        <h4 className="text-sm font-black text-blue-900 uppercase tracking-widest mb-0.5 truncate">{drillDownMerchant}</h4>
+                        <p className="text-[8px] font-bold text-blue-400 uppercase tracking-[0.2em]">Aggregate Insights</p>
                       </div>
                       
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-white p-6 rounded-[28px] border border-gray-100 shadow-sm flex flex-col items-center">
-                          <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl mb-3"><Hash size={16} /></div>
-                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Frequency</p>
-                          <p className="text-xl font-black text-gray-900">{merchantInsightStats.count} <span className="text-[10px] text-gray-300">times</span></p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="bg-white p-4 rounded-[20px] border border-gray-100 shadow-sm flex flex-col items-center">
+                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Visits</p>
+                          <p className="text-xl font-black text-gray-900">{merchantInsightStats.count}</p>
                         </div>
-                        <div className="bg-white p-6 rounded-[28px] border border-gray-100 shadow-sm flex flex-col items-center">
-                          <div className="p-2 bg-blue-50 text-blue-600 rounded-xl mb-3"><Calculator size={16} /></div>
-                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Avg Ticket</p>
+                        <div className="bg-white p-4 rounded-[20px] border border-gray-100 shadow-sm flex flex-col items-center">
+                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Avg Ticket</p>
                           <p className="text-xl font-black text-gray-900">${merchantInsightStats.avg.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
                         </div>
                       </div>
                       
-                      <div className="bg-gray-900 p-6 rounded-[28px] text-center shadow-xl">
-                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Entity Total Spend</p>
-                        <p className="text-3xl font-black text-white">${merchantInsightStats.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                      <div className="bg-gray-900 p-5 rounded-[24px] text-center shadow-xl">
+                        <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Total Period Spend</p>
+                        <p className="text-2xl font-black text-white">${merchantInsightStats.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
                       </div>
                     </div>
                     
-                    {/* Detailed Ledger / Calendar for Merchant */}
-                    <div className="w-full md:w-1/2 h-full bg-gray-50/50 rounded-[32px] border border-gray-100 flex flex-col relative overflow-hidden">
-                       <div className="p-4 border-b border-gray-100 flex items-center justify-between shrink-0 bg-white z-20">
+                    {/* Detailed History Timeline for Merchant - Tighter Padding & Removed Vertical Spacing */}
+                    <div className="w-full md:w-[65%] h-full bg-gray-50/50 rounded-[28px] border border-gray-100 flex flex-col relative overflow-hidden">
+                       <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between shrink-0 bg-white z-20">
                          <div className="flex items-center gap-2">
                            <ListOrdered size={14} className="text-gray-400" />
-                           <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Transactions</span>
+                           <span className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em]">History Timeline</span>
                          </div>
-                         <div className="flex bg-gray-200 p-1 rounded-xl">
+                         <div className="flex bg-gray-200 p-0.5 rounded-lg">
                            <button 
                              onClick={() => setMerchantViewMode('list')}
-                             className={`p-1.5 rounded-lg transition-all ${merchantViewMode === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                             className={`p-1 rounded-md transition-all ${merchantViewMode === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                             title="List View"
                            >
-                             <LayoutList size={14} />
+                             <LayoutList size={12} />
                            </button>
                            <button 
                              onClick={() => setMerchantViewMode('calendar')}
-                             className={`p-1.5 rounded-lg transition-all ${merchantViewMode === 'calendar' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                             className={`p-1 rounded-md transition-all ${merchantViewMode === 'calendar' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                             title="Monthly Calendar"
                            >
-                             <CalendarIcon size={14} />
+                             <CalendarIcon size={12} />
+                           </button>
+                           <button 
+                             onClick={() => setMerchantViewMode('yearly')}
+                             className={`p-1 rounded-md transition-all ${merchantViewMode === 'yearly' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                             title="3-Month Timeline"
+                           >
+                             <CalendarDays size={12} />
                            </button>
                          </div>
                        </div>
                        
-                       <div className={`flex-1 relative ${merchantViewMode === 'calendar' ? 'overflow-visible' : 'overflow-y-auto custom-scrollbar'}`}>
+                       <div className={`flex-1 relative ${['calendar', 'yearly'].includes(merchantViewMode) ? 'overflow-visible' : 'overflow-y-auto custom-scrollbar'}`}>
                          {merchantViewMode === 'list' ? (
                            /* List View with Sorting */
                            <div className="p-2 flex flex-col h-full">
-                             <div className="flex items-center justify-end gap-3 px-2 mb-2 pb-2 border-b border-gray-100">
+                             <div className="flex items-center justify-end gap-3 px-2 mb-1 pb-1 border-b border-gray-100">
                                <button 
                                  onClick={() => toggleMerchantSort('date')}
-                                 className={`flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg transition-all ${merchantSort.key === 'date' ? 'bg-blue-50 text-blue-600' : 'text-gray-400 hover:bg-gray-50'}`}
+                                 className={`flex items-center gap-1 text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded-md transition-all ${merchantSort.key === 'date' ? 'bg-blue-50 text-blue-600' : 'text-gray-400 hover:bg-gray-50'}`}
                                >
-                                 Date {merchantSort.key === 'date' && (merchantSort.dir === 'asc' ? <SortAsc size={10}/> : <SortDesc size={10}/>)}
+                                 Date {merchantSort.key === 'date' && (merchantSort.dir === 'asc' ? <SortAsc size={8}/> : <SortDesc size={8}/>)}
                                </button>
                                <button 
                                  onClick={() => toggleMerchantSort('amount')}
-                                 className={`flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg transition-all ${merchantSort.key === 'amount' ? 'bg-blue-50 text-blue-600' : 'text-gray-400 hover:bg-gray-50'}`}
+                                 className={`flex items-center gap-1 text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded-md transition-all ${merchantSort.key === 'amount' ? 'bg-blue-50 text-blue-600' : 'text-gray-400 hover:bg-gray-50'}`}
                                >
-                                 Amount {merchantSort.key === 'amount' && (merchantSort.dir === 'asc' ? <SortAsc size={10}/> : <SortDesc size={10}/>)}
+                                 Amount {merchantSort.key === 'amount' && (merchantSort.dir === 'asc' ? <SortAsc size={8}/> : <SortDesc size={8}/>)}
                                </button>
                              </div>
-                             <div className="space-y-1.5 overflow-y-auto custom-scrollbar pr-1">
+                             <div className="space-y-1 overflow-y-auto custom-scrollbar pr-1">
                                {merchantDetailTransactions.map((t, i) => (
-                                 <div key={i} className="bg-white p-3.5 rounded-2xl flex items-center justify-between border border-transparent shadow-sm hover:border-blue-100 hover:shadow-md transition-all group">
-                                   <div className="flex items-center gap-4">
-                                     <div className="p-2.5 bg-gray-50 rounded-xl text-gray-400 group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors shadow-inner">
-                                       <CalendarIcon size={14} />
+                                 <div key={i} className="bg-white px-3 py-2 rounded-xl flex items-center justify-between border border-transparent shadow-sm hover:border-blue-100 transition-all group">
+                                   <div className="flex items-center gap-3">
+                                     <div className="p-1 bg-gray-50 rounded-lg text-gray-400 group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors">
+                                       <CalendarIcon size={12} />
                                      </div>
-                                     <div className="space-y-0.5">
-                                       <p className="text-[11px] font-black text-gray-900 leading-none">
-                                         {formatLongDate(t.date)}
-                                       </p>
-                                       <p className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter truncate max-w-[160px]">
-                                         {t.description || "--"}
-                                       </p>
-                                     </div>
+                                     <p className="text-[10px] font-black text-gray-900 leading-none">{t.date}</p>
                                    </div>
-                                   <span className="text-[13px] font-black text-rose-600 tabular-nums">
-                                     -${t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                   <span className="text-[12px] font-black text-rose-600 tabular-nums">
+                                     -${t.amount.toFixed(2)}
                                    </span>
                                  </div>
                                ))}
                              </div>
                            </div>
-                         ) : (
-                           /* Calendar View - Fixed row count and placement with Light Tooltip */
+                         ) : merchantViewMode === 'calendar' ? (
+                           /* Single Month Calendar View - Vertically Tighter (No gap-y) */
                            <div className="h-full flex flex-col p-3 animate-in zoom-in-95 duration-200 bg-white overflow-visible">
                              <div className="flex items-center justify-between mb-2 px-1">
-                               <button onClick={() => changeMonth(-1)} className="p-1 text-gray-400 hover:text-blue-600 transition-colors"><ChevronLeft size={16}/></button>
-                               <h5 className="text-[10px] font-black uppercase text-gray-900 tracking-widest">
+                               <button onClick={() => changeMonth(-1)} className="p-1 text-gray-400 hover:text-blue-600 transition-colors"><ChevronLeft size={14}/></button>
+                               <h5 className="text-[9px] font-black uppercase text-gray-900 tracking-[0.2em]">
                                  {FULL_MONTH_NAMES[calendarDate.getMonth()]} {calendarDate.getFullYear()}
                                </h5>
-                               <button onClick={() => changeMonth(1)} className="p-1 text-gray-400 hover:text-blue-600 transition-colors"><ChevronRight size={16}/></button>
+                               <button onClick={() => changeMonth(1)} className="p-1 text-gray-400 hover:text-blue-600 transition-colors"><ChevronRight size={14}/></button>
                              </div>
                              
-                             <div className="grid grid-cols-7 gap-1 flex-1 overflow-visible">
+                             {/* Removed gap-y for tighter vertical rows */}
+                             <div className="grid grid-cols-7 gap-x-1 gap-y-0 flex-1 overflow-visible border-t border-l border-gray-50">
                                {DAYS_SHORT.map(d => (
-                                 <div key={d} className="text-center text-[8px] font-black text-gray-300 uppercase py-1">{d}</div>
+                                 <div key={d} className="text-center text-[7px] font-black text-gray-300 uppercase py-1 border-b border-r border-gray-50">{d[0]}</div>
                                ))}
                                {calendarData.map((d, i) => {
-                                 // Tooltip logical placement
                                  const colIndex = i % 7;
                                  const isBottomRows = i >= 21;
-                                 
                                  let tooltipXClass = "left-1/2 -translate-x-1/2";
                                  let arrowXClass = "left-1/2 -translate-x-1/2";
-                                 
-                                 if (colIndex <= 1) {
-                                   tooltipXClass = "left-0 translate-x-0";
-                                   arrowXClass = "left-4";
-                                 } else if (colIndex >= 5) {
-                                   tooltipXClass = "right-0 translate-x-0 left-auto";
-                                   arrowXClass = "right-4 left-auto";
-                                 }
+                                 if (colIndex <= 1) { tooltipXClass = "left-0 translate-x-0"; arrowXClass = "left-4"; } 
+                                 else if (colIndex >= 5) { tooltipXClass = "right-0 translate-x-0 left-auto"; arrowXClass = "right-4 left-auto"; }
 
                                  return (
-                                   <div key={i} className="relative group h-9 md:h-11">
+                                   <div key={i} className="relative group h-7 md:h-8 border-b border-r border-gray-50">
                                      {d.day ? (
                                        <>
-                                         <div className={`w-full h-full rounded-lg border flex items-center justify-center text-[10px] font-black transition-all ${
+                                         <div className={`w-full h-full flex items-center justify-center text-[8px] font-black transition-all ${
                                             d.txs.length > 0 
-                                              ? 'bg-blue-50 text-blue-700 border-blue-100 shadow-sm' 
-                                              : 'bg-white text-gray-300 border-gray-50'
+                                              ? 'bg-blue-600 text-white shadow-inner' 
+                                              : 'bg-white text-gray-300'
                                           }`}>
                                            {d.day}
                                          </div>
-                                         {/* Smarter Light Tooltip positioning */}
                                          {d.txs.length > 0 && (
-                                           <div className={`absolute ${isBottomRows ? 'bottom-full mb-3' : 'top-full mt-3'} ${tooltipXClass} z-[300] w-60 bg-white p-4 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.15)] opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 translate-y-1 group-hover:translate-y-0 border border-blue-50`}>
-                                              <p className="text-[9px] font-black uppercase tracking-[0.1em] text-blue-600 mb-3 border-b border-gray-50 pb-2">{formatLongDate(d.date!)}</p>
-                                              <div className="space-y-4 max-h-[160px] overflow-y-auto scrollbar-hide">
+                                           <div className={`absolute ${isBottomRows ? 'bottom-full mb-2' : 'top-full mt-2'} ${tooltipXClass} z-[300] w-52 bg-white p-3 rounded-2xl shadow-[0_10px_40_rgba(0,0,0,0.15)] opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 translate-y-1 group-hover:translate-y-0 border border-blue-50`}>
+                                              <p className="text-[8px] font-black uppercase tracking-[0.1em] text-blue-600 mb-2 border-b border-gray-50 pb-1.5">{formatLongDate(d.date!)}</p>
+                                              <div className="space-y-2 max-h-[120px] overflow-y-auto scrollbar-hide">
                                                 {d.txs.map((tx, idx) => (
-                                                  <div key={idx} className="flex flex-col gap-1.5 border-b border-gray-50 last:border-0 pb-1.5 last:pb-0">
-                                                    <div className="flex justify-between items-center">
-                                                      <span className="text-xs font-black text-gray-900">${tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                                                    </div>
-                                                    {tx.description && (
-                                                      <p className="text-[10px] font-medium text-gray-500 leading-snug">
-                                                        {tx.description}
-                                                      </p>
-                                                    )}
+                                                  <div key={idx} className="flex flex-col gap-0.5 border-b border-gray-50 last:border-0 pb-1 last:pb-0">
+                                                    <span className="text-[10px] font-black text-gray-900">${tx.amount.toFixed(2)}</span>
                                                   </div>
                                                 ))}
                                               </div>
@@ -936,11 +934,63 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
                                          )}
                                        </>
                                      ) : (
-                                        <div className="w-full h-full"></div>
+                                        <div className="w-full h-full bg-gray-50/20"></div>
                                      )}
                                    </div>
                                  );
                                })}
+                             </div>
+                           </div>
+                         ) : (
+                           /* 3-Month Window Side-by-Side View - Vertically Tighter (gap-y-0) and No Overflow Clip */
+                           <div className="h-full flex flex-col p-3 bg-white animate-in zoom-in-95 duration-300">
+                             <div className="flex items-center justify-between mb-4 shrink-0 px-2">
+                               <button onClick={() => changeMonth(-1)} className="p-1.5 bg-gray-50 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"><ChevronLeft size={16}/></button>
+                               <h5 className="text-[9px] font-black uppercase text-gray-400 tracking-[0.15em]">Timeline Explorer</h5>
+                               <button onClick={() => changeMonth(1)} className="p-1.5 bg-gray-50 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"><ChevronRight size={16}/></button>
+                             </div>
+
+                             <div className="grid grid-cols-3 gap-3 flex-1 overflow-visible">
+                               {scrollableCalendarWindow.map((month, mIdx) => (
+                                 <div key={mIdx} className="bg-gray-50/50 p-2 rounded-[20px] border border-gray-100/50 transition-all flex flex-col overflow-visible">
+                                   <div className="flex items-center justify-between mb-1.5 px-1 bg-white/50 py-1">
+                                      <h6 className="text-[8px] font-black uppercase text-blue-600 tracking-wider">{month.name}</h6>
+                                      <span className="text-[7px] font-black text-gray-300">{month.year}</span>
+                                   </div>
+                                   {/* Removed gap-y for rows and added overflow-visible to fix tooltip clipping */}
+                                   <div className="grid grid-cols-7 gap-x-0.5 gap-y-0 flex-1 border-t border-l border-gray-100/50 overflow-visible">
+                                      {DAYS_SHORT.map(d => <div key={d} className="text-[6px] font-black text-gray-300 text-center py-0.5 uppercase border-b border-r border-gray-100/50">{d[0]}</div>)}
+                                      {month.days.map((d, dIdx) => (
+                                        <div key={dIdx} className="relative group border-b border-r border-gray-100/50">
+                                          {d.day ? (
+                                            <>
+                                              <div className={`w-full h-full flex items-center justify-center text-[7px] font-bold transition-all ${
+                                                d.txs.length > 0 
+                                                  ? 'bg-blue-600 text-white shadow-inner' 
+                                                  : 'bg-white text-gray-400'
+                                              }`}>
+                                                {d.day}
+                                              </div>
+                                              {d.txs.length > 0 && (
+                                                <div className={`absolute bottom-full mb-2 ${mIdx === 2 ? 'right-0' : mIdx === 0 ? 'left-0' : 'left-1/2 -translate-x-1/2'} z-[300] w-52 bg-white p-3 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.15)] border border-blue-50 opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 translate-y-1 group-hover:translate-y-0`}>
+                                                   <p className="text-[8px] font-black uppercase tracking-widest text-blue-500 mb-1 border-b border-gray-50 pb-1.5">{formatLongDate(d.date!)}</p>
+                                                   <div className="space-y-1 max-h-24 overflow-y-auto scrollbar-hide pr-1">
+                                                     {d.txs.map((tx, txIdx) => (
+                                                       <div key={txIdx} className="border-b border-gray-50 last:border-0 pb-1 last:pb-0">
+                                                         <p className="text-[10px] font-black text-gray-900">${tx.amount.toFixed(2)}</p>
+                                                       </div>
+                                                     ))}
+                                                   </div>
+                                                   <div className={`absolute top-full ${mIdx === 2 ? 'right-2' : mIdx === 0 ? 'left-2' : 'left-1/2 -translate-x-1/2'} w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[6px] border-t-white`}></div>
+                                                </div>
+                                              )}
+                                            </>
+                                          ) : <div className="w-full h-full bg-gray-50/10"></div>}
+                                        </div>
+                                      ))}
+                                   </div>
+                                 </div>
+                               ))}
                              </div>
                            </div>
                          )}
@@ -990,17 +1040,17 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, categories }) => {
                           <button 
                             key={item.name} 
                             onClick={() => handleSliceClick(item)}
-                            className="w-full flex items-center justify-between py-0.5 px-3 rounded-xl hover:bg-gray-50 transition-all group border border-transparent hover:border-gray-100"
+                            className="w-full flex items-center justify-between py-1.5 px-4 rounded-2xl hover:bg-gray-50 transition-all group border border-transparent hover:border-gray-100"
                           >
-                            <div className="flex items-center gap-2 overflow-hidden flex-1">
-                              <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }}></div>
+                            <div className="flex items-center gap-3 overflow-hidden flex-1">
+                              <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }}></div>
                               <span className="text-[11px] font-black uppercase text-gray-500 truncate group-hover:text-gray-900">{item.name}</span>
                             </div>
                             <div className="flex items-center gap-4 shrink-0 ml-4">
-                              <span className="text-[11px] font-black text-gray-900">
+                              <span className="text-[12px] font-black text-gray-900">
                                 ${item.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </span>
-                              <span className="w-10 text-right text-[10px] font-bold text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-md">
+                              <span className="w-12 text-right text-[10px] font-bold text-blue-500 bg-blue-50 px-2 py-1 rounded-lg">
                                 {percentage}%
                               </span>
                             </div>
